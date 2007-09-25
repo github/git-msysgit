@@ -17,9 +17,15 @@
 
 #include <errno.h>
 #include <sys/types.h>
+
+#ifndef __MINGW32__
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#else
+#include <winsock2.h>
+#endif
+
 #include <stdio.h>
 #include <string.h>
 
@@ -214,7 +220,9 @@ inet_pton(int af, const char *src, void *dst)
                 return (inet_pton6(src, dst));
 #endif
         default:
+#ifndef __MINGW32__
                 errno = EAFNOSUPPORT;
+#endif
                 return (-1);
         }
         /* NOTREACHED */

@@ -499,6 +499,7 @@ ifneq (,$(findstring MINGW,$(uname_S)))
 	NO_SVN_TESTS=YesPlease
 	NO_PERL_MAKEMAKER=YesPlease
 	NO_R_TO_GCC_LINKER = YesPlease
+	NO_INET_PTON=YesPlease
 	COMPAT_CFLAGS += -DNO_ETC_PASSWD -DNO_ST_BLOCKS -DSTRIP_EXTENSION=\".exe\" -D__USE_MINGW_ACCESS -I compat
 	COMPAT_OBJS += compat/mingw.o compat/fnmatch.o compat/regex.o
 	EXTLIBS += -lws2_32
