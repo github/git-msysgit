@@ -233,6 +233,7 @@ SCRIPTS = $(patsubst %.sh,%,$(SCRIPT_SH)) \
 PROGRAMS = \
 	git-fetch-pack$X \
 	git-hash-object$X git-index-pack$X git-local-fetch$X \
+	git-daemon$X \
 	git-fast-import$X \
 	git-merge-index$X git-mktag$X git-mktree$X git-patch-id$X \
 	git-peek-remote$X git-receive-pack$X \

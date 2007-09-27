@@ -3,7 +3,11 @@
 #include "exec_cmd.h"
 #include "interpolate.h"
 
+#ifndef __MINGW32__
 #include <syslog.h>
+#else
+#include <winsock2.h>
+#endif
 
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 256
@@ -12,6 +16,8 @@
 static int log_syslog;
 static int verbose;
 static int reuseaddr;
+
+extern int inet_pton(int af, const char *src, void *dst);
 
 static const char daemon_usage[] =
 "git-daemon [--verbose] [--syslog] [--export-all]\n"
@@ -85,10 +91,12 @@ static void logreport(int priority, const char *err, va_list params)
 	maxlen = sizeof(buf) - buflen - 1; /* -1 for our own LF */
 	msglen = vsnprintf(buf + buflen, maxlen, err, params);
 
+#ifndef __MINGW32__
 	if (log_syslog) {
 		syslog(priority, "%s", buf);
 		return;
 	}
+#endif
 
 	/* maxlen counted our own LF but also counts space given to
 	 * vsnprintf for the terminating NUL.  We want to make sure that
@@ -608,6 +616,7 @@ static int execute(struct sockaddr *addr)
  * operation cheap. It should also be at least twice
  * the maximum number of connections we will ever allow.
  */
+#ifndef __MINGW32__
 #define MAX_CHILDREN 128
 
 static int max_connections = 25;
@@ -719,9 +728,11 @@ static void check_max_connections(void)
 		sleep(1);
 	}
 }
+#endif /* __MINGW32__ */
 
 static void handle(int incoming, struct sockaddr *addr, int addrlen)
 {
+#ifndef __MINGW32__
 	pid_t pid = fork();
 
 	if (pid) {
@@ -738,6 +749,12 @@ static void handle(int incoming, struct sockaddr *addr, int addrlen)
 		check_max_connections();
 		return;
 	}
+#else
+	/* convert into a file descriptor */
+	if ((incoming = _open_osfhandle(incoming, O_RDWR|O_BINARY)) < 0)
+		die("unable to make a socket file descriptor: %s",
+			strerror(errno));
+#endif
 
 	dup2(incoming, 0);
 	dup2(incoming, 1);
@@ -746,6 +763,7 @@ static void handle(int incoming, struct sockaddr *addr, int addrlen)
 	exit(execute(addr));
 }
 
+#ifndef __MINGW32__
 static void child_handler(int signo)
 {
 	for (;;) {
@@ -771,6 +789,7 @@ static void child_handler(int signo)
 		break;
 	}
 }
+#endif /* __MINGW32__ */
 
 static int set_reuse_addr(int sockfd)
 {
@@ -779,7 +798,7 @@ static int set_reuse_addr(int sockfd)
 	if (!reuseaddr)
 		return 0;
 	return setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
-			  &on, sizeof(on));
+			  (char*)&on, sizeof(on));
 }
 
 #ifndef NO_IPV6
@@ -820,7 +839,7 @@ static int socksetup(char *listen_addr, int listen_port, int **socklist_p)
 		if (ai->ai_family == AF_INET6) {
 			int on = 1;
 			setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY,
-				   &on, sizeof(on));
+				   (char*)&on, sizeof(on));
 			/* Note: error is not fatal */
 		}
 #endif
@@ -862,7 +881,16 @@ static int socksetup(char *listen_addr, int listen_port, int **socklist_p)
 {
 	struct sockaddr_in sin;
 	int sockfd;
+#ifndef __MINGW32__
 	long flags;
+#else
+	WSADATA wsa;
+
+	if (WSAStartup(MAKEWORD(2,2), &wsa))
+		die("unable to initialize winsock subsystem, error %d",
+			WSAGetLastError());
+	atexit((void(*)(void)) WSACleanup);
+#endif
 
 	memset(&sin, 0, sizeof sin);
 	sin.sin_family = AF_INET;
@@ -885,7 +913,7 @@ static int socksetup(char *listen_addr, int listen_port, int **socklist_p)
 		return 0;
 	}
 
-	if ( bind(sockfd, (struct sockaddr *)&sin, sizeof sin) < 0 ) {
+	if (bind(sockfd, (struct sockaddr *)&sin, sizeof sin) < 0 ) {
 		close(sockfd);
 		return 0;
 	}
@@ -895,9 +923,11 @@ static int socksetup(char *listen_addr, int listen_port, int **socklist_p)
 		return 0;
 	}
 
+#ifndef __MINGW32__
 	flags = fcntl(sockfd, F_GETFD, 0);
 	if (flags >= 0)
 		fcntl(sockfd, F_SETFD, flags | FD_CLOEXEC);
+#endif
 
 	*socklist_p = xmalloc(sizeof(int));
 	**socklist_p = sockfd;
@@ -906,6 +936,7 @@ static int socksetup(char *listen_addr, int listen_port, int **socklist_p)
 
 #endif
 
+#ifndef __MINGW32__
 static int service_loop(int socknum, int *socklist)
 {
 	struct pollfd *pfd;
@@ -953,6 +984,32 @@ static int service_loop(int socknum, int *socklist)
 	}
 }
 
+#else /* __MINGW32__ */
+
+static int service_loop(int socknum, int *socklist)
+{
+	for (;;) {
+		int i;
+		for (i = 0; i < socknum; i++) {
+			struct sockaddr_storage ss;
+			unsigned int sslen = sizeof(ss);
+			int incoming = accept(socklist[i], (struct sockaddr *)&ss, &sslen);
+			if (incoming < 0) {
+				switch (errno) {
+				case EAGAIN:
+				case EINTR:
+				case ECONNABORTED:
+					continue;
+				default:
+					die("accept returned %s", strerror(errno));
+				}
+			}
+			handle(incoming, (struct sockaddr *)&ss, sslen);
+		}
+	}
+}
+#endif /* __MINGW32__ */
+
 /* if any standard file descriptor is missing open it to /dev/null */
 static void sanitize_stdfds(void)
 {
@@ -975,8 +1032,10 @@ static void daemonize(void)
 		default:
 			exit(0);
 	}
+#ifndef __MINGW32__
 	if (setsid() == -1)
 		die("setsid failed: %s", strerror(errno));
+#endif
 	close(0);
 	close(1);
 	close(2);
@@ -992,7 +1051,11 @@ static void store_pid(const char *path)
 		die("failed to write pid file %s: %s", path, strerror(errno));
 }
 
+#ifndef __MINGW32__
 static int serve(char *listen_addr, int listen_port, struct passwd *pass, gid_t gid)
+#else
+static int serve(char *listen_addr, int listen_port)
+#endif
 {
 	int socknum, *socklist;
 
@@ -1001,10 +1064,12 @@ static int serve(char *listen_addr, int listen_port, struct passwd *pass, gid_t 
 		die("unable to allocate any listen sockets on host %s port %u",
 		    listen_addr, listen_port);
 
+#ifndef __MINGW32__
 	if (pass && gid &&
 	    (initgroups(pass->pw_name, gid) || setgid (gid) ||
 	     setuid(pass->pw_uid)))
 		die("cannot drop privileges");
+#endif
 
 	return service_loop(socknum, socklist);
 }
@@ -1016,9 +1081,11 @@ int main(int argc, char **argv)
 	int inetd_mode = 0;
 	const char *pid_file = NULL, *user_name = NULL, *group_name = NULL;
 	int detach = 0;
+#ifndef __MINGW32__
 	struct passwd *pass = NULL;
 	struct group *group;
 	gid_t gid = 0;
+#endif
 	int i;
 
 	/* Without this we cannot rely on waitpid() to tell
@@ -1154,6 +1221,7 @@ int main(int argc, char **argv)
 	if (group_name && !user_name)
 		die("--group supplied without --user");
 
+#ifndef __MINGW32__
 	if (user_name) {
 		pass = getpwnam(user_name);
 		if (!pass)
@@ -1169,11 +1237,14 @@ int main(int argc, char **argv)
 			gid = group->gr_gid;
 		}
 	}
+#endif
 
+#ifndef __MINGW32__
 	if (log_syslog) {
 		openlog("git-daemon", 0, LOG_DAEMON);
 		set_die_routine(daemon_die);
 	}
+#endif
 
 	if (strict_paths && (!ok_paths || !*ok_paths))
 		die("option --strict-paths requires a whitelist");
@@ -1181,7 +1252,11 @@ int main(int argc, char **argv)
 	if (inetd_mode) {
 		struct sockaddr_storage ss;
 		struct sockaddr *peer = (struct sockaddr *)&ss;
+#ifndef __MINGW32__
 		socklen_t slen = sizeof(ss);
+#else
+		int slen = sizeof(ss);
+#endif
 
 		freopen("/dev/null", "w", stderr);
 
@@ -1199,5 +1274,9 @@ int main(int argc, char **argv)
 	if (pid_file)
 		store_pid(pid_file);
 
+#ifndef __MINGW32__
 	return serve(listen_addr, listen_port, pass, gid);
+#else
+	return serve(listen_addr, listen_port);
+#endif
 }
