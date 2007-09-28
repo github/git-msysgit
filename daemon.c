@@ -384,23 +384,60 @@ static int upload_pack(void)
 {
 	/* Timeout as string */
 	char timeout_buf[64];
+#ifdef __MINGW32__
+	const char *argv[64];
+	int i = 0;
+#endif
 
 	snprintf(timeout_buf, sizeof timeout_buf, "--timeout=%u", timeout);
 
 	/* git-upload-pack only ever reads stuff, so this is safe */
+#ifndef __MINGW32__
 	execl_git_cmd("upload-pack", "--strict", timeout_buf, ".", NULL);
+#else
+	argv[i++] = "upload-pack";
+	argv[i++] = "--strict";
+	argv[i++] = timeout_buf;
+	argv[i++] = ".";
+	argv[i++] = NULL;
+	spawnv_git_cmd(argv, NULL, NULL);
+#endif
 	return -1;
 }
 
 static int upload_archive(void)
 {
+#ifdef __MINGW32__
+	const char *argv[32];
+	int i = 0;
+#endif
+
+#ifndef __MINGW32__
 	execl_git_cmd("upload-archive", ".", NULL);
+#else
+	argv[i++] = "upload-archive";
+	argv[i++] = ".";
+	argv[i++] = NULL;
+	spawnv_git_cmd(argv, NULL, NULL);
+#endif
 	return -1;
 }
 
 static int receive_pack(void)
 {
+#ifdef __MINGW32__
+	const char *argv[32];
+	int i = 0;
+#endif
+
+#ifndef __MINGW32__
 	execl_git_cmd("receive-pack", ".", NULL);
+#else
+	argv[i++] = "receive-pack";
+	argv[i++] = ".";
+	argv[i++] = NULL;
+	spawnv_git_cmd(argv, NULL, NULL);
+#endif
 	return -1;
 }
 
@@ -730,9 +767,9 @@ static void check_max_connections(void)
 }
 #endif /* __MINGW32__ */
 
+#ifndef __MINGW32__
 static void handle(int incoming, struct sockaddr *addr, int addrlen)
 {
-#ifndef __MINGW32__
 	pid_t pid = fork();
 
 	if (pid) {
@@ -749,12 +786,6 @@ static void handle(int incoming, struct sockaddr *addr, int addrlen)
 		check_max_connections();
 		return;
 	}
-#else
-	/* convert into a file descriptor */
-	if ((incoming = _open_osfhandle(incoming, O_RDWR|O_BINARY)) < 0)
-		die("unable to make a socket file descriptor: %s",
-			strerror(errno));
-#endif
 
 	dup2(incoming, 0);
 	dup2(incoming, 1);
@@ -762,6 +793,37 @@ static void handle(int incoming, struct sockaddr *addr, int addrlen)
 
 	exit(execute(addr));
 }
+
+#else /* __MINGW32__ */
+static void handle(int incoming, struct sockaddr *addr, int addrlen)
+{
+	int s0 = dup(0);
+	int s1 = dup(1);
+
+	/* convert into a file descriptor */
+	if ((incoming = _open_osfhandle(incoming, O_RDWR|O_BINARY)) < 0)
+		die("unable to make a socket file descriptor: %s",
+			strerror(errno));
+
+	dup2(incoming, 0);
+	dup2(incoming, 1);
+	close(incoming);
+
+	execute(addr);
+	close(0);
+	close(1);
+
+	if(s0 >= 0) {
+		dup2(s0, 0);
+		close(s0);
+	}
+
+	if(s1 >= 0) {
+		dup2(s1, 1);
+		close(s1);
+	}
+}
+#endif
 
 #ifndef __MINGW32__
 static void child_handler(int signo)
