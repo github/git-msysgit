@@ -2001,11 +2001,11 @@ static struct commit *fake_working_tree_commit(const char *path, const char *con
 	struct commit *commit;
 	struct origin *origin;
 	unsigned char head_sha1[20];
-	char *buf;
+	char *buf, *nbuf;
 	const char *ident;
 	int fd;
 	time_t now;
-	unsigned long fin_size;
+	unsigned long fin_size, nsize;
 	int size, len;
 	struct cache_entry *ce;
 	unsigned mode;
@@ -2076,6 +2076,13 @@ static struct commit *fake_working_tree_commit(const char *path, const char *con
 		buf = xrealloc(buf, fin_size + 1);
 	}
 	buf[fin_size] = 0;
+	nsize = fin_size;
+	nbuf = convert_to_git(path, buf, &nsize);
+	if (nbuf) {
+	    free(buf);
+	    buf = nbuf;
+	    fin_size = nsize;
+	}
 	origin->file.ptr = buf;
 	origin->file.size = fin_size;
 	pretend_sha1_file(buf, fin_size, OBJ_BLOB, origin->blob_sha1);
