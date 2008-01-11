@@ -81,7 +81,7 @@ static int ce_compare_link(struct cache_entry *ce, size_t expected_size)
 		return -1;
 	}
 	if (size == expected_size)
-		match = memcmp(buffer, target, size);
+		match = strncasecmp(buffer, target, size);
 	free(buffer);
 	free(target);
 	return match;
@@ -292,7 +292,7 @@ int cache_name_compare(const char *name1, int flags1, const char *name2, int fla
 	int len = len1 < len2 ? len1 : len2;
 	int cmp;
 
-	cmp = memcmp(name1, name2, len);
+	cmp = strncasecmp(name1, name2, len);
 	if (cmp)
 		return cmp;
 	if (len1 < len2)
