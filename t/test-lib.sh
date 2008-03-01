@@ -284,6 +284,8 @@ test_create_repo () {
 	"$GIT_EXEC_PATH/git" init --template=$GIT_EXEC_PATH/templates/blt/ >/dev/null 2>&1 ||
 	error "cannot run git init -- have you built things yet?"
 	mv .git/hooks .git/hooks-disabled
+	"$GIT_EXEC_PATH/git" config core.autocrlf false >/dev/null 2>&1 ||
+	error "cannot run git config -- have you built things yet?"
 	cd "$owd"
 }
 
