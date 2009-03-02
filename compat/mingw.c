@@ -8,6 +8,8 @@ unsigned int _CRT_fmode = _O_BINARY;
 int mingw_open (const char *filename, int oflags, ...)
 {
 	va_list args;
+	wchar_t *unicode_filename;
+	int unicode_filename_len;
 	unsigned mode;
 	va_start(args, oflags);
 	mode = va_arg(args, int);
@@ -15,13 +17,69 @@ int mingw_open (const char *filename, int oflags, ...)
 
 	if (!strcmp(filename, "/dev/null"))
 		filename = "nul";
-	int fd = open(filename, oflags, mode);
+
+	unicode_filename_len = MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
+	if (0 == unicode_filename_len) {
+		errno = EINVAL;
+		return -1;
+	};
+
+	unicode_filename = xmalloc(unicode_filename_len * sizeof (wchar_t));
+	if (NULL == unicode_filename) {
+		errno = ENOMEM;
+		return -1;
+	}
+	MultiByteToWideChar(CP_UTF8, 0, filename, -1, unicode_filename, unicode_filename_len);
+	int fd = _wopen(unicode_filename, oflags, mode);
+	free(unicode_filename);
+
 	if (fd < 0 && (oflags & O_CREAT) && errno == EACCES) {
 		DWORD attrs = GetFileAttributes(filename);
 		if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
 			errno = EISDIR;
 	}
 	return fd;
+}
+
+FILE *mingw_fopen (const char *filename, const char *mode)
+{
+	wchar_t *unicode_filename, *unicode_mode;
+	int unicode_filename_len, unicode_mode_len;
+	FILE *fh;
+
+	unicode_filename_len = MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
+	if (0 == unicode_filename_len) {
+		errno = EINVAL;
+		return NULL;
+	};
+
+	unicode_filename = xmalloc(unicode_filename_len * sizeof (wchar_t));
+	if (NULL == unicode_filename) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	MultiByteToWideChar(CP_UTF8, 0, filename, -1, unicode_filename, unicode_filename_len);
+
+	unicode_mode_len = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+	if (0 == unicode_mode_len) {
+		free(unicode_filename);
+		errno = EINVAL;
+		return NULL;
+	};
+
+	unicode_mode = xmalloc(unicode_mode_len * sizeof (wchar_t));
+	if (NULL == unicode_mode) {
+		free(unicode_mode);
+		errno = ENOMEM;
+		return NULL;
+	}
+	MultiByteToWideChar(CP_UTF8, 0, mode, -1, unicode_mode, unicode_mode_len);
+
+	fh = _wfopen(unicode_filename, unicode_mode);
+	free(unicode_filename);
+	free(unicode_mode);
+
+	return fh;
 }
 
 static inline time_t filetime_to_time_t(const FILETIME *ft)
