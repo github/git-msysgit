@@ -197,13 +197,20 @@ int winansi_fprintf(FILE *stream, const char *format, ...) __attribute__((format
 #define fprintf(...) winansi_fprintf(__VA_ARGS__)
 
 /*
+ * Force C99 compliant printf() functions
+ */
+#define snprintf __mingw_snprintf
+#define vsnprintf __mingw_vsnprintf
+#define vfprintf __mingw_vfprintf
+
+/*
  * git specific compatibility
  */
 
 #define has_dos_drive_prefix(path) (isalpha(*(path)) && (path)[1] == ':')
 #define is_dir_sep(c) ((c) == '/' || (c) == '\\')
 #define PATH_SEP ';'
-#define PRIuMAX "I64u"
+#define PRIuMAX "llu"
 
 void mingw_open_html(const char *path);
 #define open_html mingw_open_html

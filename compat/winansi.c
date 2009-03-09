@@ -12,6 +12,10 @@
 #undef fprintf
 #undef fputs
 /* TODO: write */
+#undef vsnprintf
+
+#define printf __mingw_printf
+#define fprintf __mingw_fprintf
 
 /*
  ANSI codes used by git: m, K

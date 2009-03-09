@@ -14,6 +14,7 @@
 #endif
 
 #undef vsnprintf
+#define vsnprintf __mingw_vsnprintf
 int git_vsnprintf(char *str, size_t maxsize, const char *format, va_list ap)
 {
 	char *s;
