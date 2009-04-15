@@ -2221,7 +2221,10 @@ static void write_sha1_file_prepare(const void *buf, unsigned long len,
 int move_temp_to_file(const char *tmpfile, const char *filename)
 {
 	int ret = 0;
-	if (link(tmpfile, filename))
+
+	if (unreliable_hardlinks)
+		ret = ~EEXIST;
+	else if (link(tmpfile, filename))
 		ret = errno;
 
 	/*
