@@ -2,6 +2,7 @@
 #include "win32.h"
 #include <conio.h>
 #include "../strbuf.h"
+#include "../cache.h"
 
 unsigned int _CRT_fmode = _O_BINARY;
 
@@ -118,9 +119,70 @@ static int err_win_to_posix(DWORD winerr)
 	return error;
 }
 
+/*
+ * make paths with special names absolute and prepend \\.\
+ */
+static inline const char *handle_special_name(char *buffer,
+					      const char *path, int n)
+{
+	char cwd[PATH_MAX];
+	static int initialized = 0;
+	static regex_t special3, special4;
+	int sep = -1, len;
+	const char *psep = "\\";
+
+	if (!enable_windows_special_names)
+		return path;
+
+	if (!initialized) {
+		if (regcomp(&special3, "^(aux|con|nul|prn)(\\..*)?$",
+					REG_ICASE | REG_EXTENDED) ||
+		    regcomp(&special4, "^(com|lpt)[0-9](\\..*)?$",
+					REG_ICASE | REG_EXTENDED))
+			die ("Could not initialize special filename pattern");
+		initialized = 1;
+	}
+
+	for (len = 0; path[len]; len++)
+		if (is_dir_sep(path[len]))
+			sep = len;
+
+	for (len = sep + 1; path[len]; len++)
+		if (path[len] == '.')
+			break;
+
+	switch (len - sep) {
+		case 4:
+			if (regexec(&special3, path + sep + 1, 0, NULL, 0))
+				return path;
+			break;
+		case 5:
+			if (regexec(&special4, path + sep + 1, 0, NULL, 0))
+				return path;
+			break;
+		default:
+			return path;
+	}
+
+	/* make the path absolute if not already */
+	if (is_absolute_path(path) || !getcwd(cwd, PATH_MAX)) {
+	    cwd[0] = '\0';
+	    psep++;
+	}
+
+	/* prepend our magic spell to make windows do what we want */
+	snprintf(buffer, n, "\\\\.\\%s%s%s", cwd, psep, path);
+
+	return buffer;
+}
+
 #undef unlink
 int mingw_unlink(const char *pathname)
 {
+	char buffer[PATH_MAX];
+
+	pathname = handle_special_name(buffer, pathname, PATH_MAX);
+
 	/* read-only files cannot be removed */
 	chmod(pathname, 0666);
 	return unlink(pathname);
@@ -131,9 +193,13 @@ int mingw_open (const char *filename, int oflags, ...)
 {
 	va_list args;
 	unsigned mode;
+	char buffer[PATH_MAX];
+
 	va_start(args, oflags);
 	mode = va_arg(args, int);
 	va_end(args);
+
+	filename = handle_special_name(buffer, filename, PATH_MAX);
 
 	if (!strcmp(filename, "/dev/null"))
 		filename = "nul";
@@ -161,6 +227,9 @@ static inline time_t filetime_to_time_t(const FILETIME *ft)
 static int do_lstat(const char *file_name, struct stat *buf)
 {
 	WIN32_FILE_ATTRIBUTE_DATA fdata;
+	char buffer[PATH_MAX];
+
+	file_name = handle_special_name(buffer, file_name, PATH_MAX);
 
 	if (!(errno = get_file_attr(file_name, &fdata))) {
 		buf->st_ino = 0;
@@ -255,6 +324,9 @@ int mingw_utime (const char *file_name, const struct utimbuf *times)
 {
 	FILETIME mft, aft;
 	int fh, rc;
+	char buffer[PATH_MAX];
+
+	file_name = handle_special_name(buffer, file_name, PATH_MAX);
 
 	/* must have write permission */
 	if ((fh = open(file_name, O_RDWR | O_BINARY)) < 0)
@@ -946,6 +1018,10 @@ int mingw_rename(const char *pold, const char *pnew)
 	DWORD attrs, gle;
 	int tries = 0;
 	static const int delay[] = { 0, 1, 10, 20, 40 };
+	char b_old[PATH_MAX], b_new[PATH_MAX];
+
+	pold = handle_special_name(b_old, pold, PATH_MAX);
+	pnew = handle_special_name(b_new, pnew, PATH_MAX);
 
 	/*
 	 * Try native rename() first to get errno right.
@@ -1123,6 +1199,16 @@ sig_handler_t mingw_signal(int sig, sig_handler_t handler)
 	return old;
 }
 
+#undef rmdir
+int mingw_rmdir(const char *path)
+{
+    char buffer[MAX_PATH];
+
+    path = handle_special_name(buffer, path, MAX_PATH);
+
+    return rmdir(path);
+}
+
 static const char *make_backslash_path(const char *path)
 {
 	static char buf[PATH_MAX + 1];
@@ -1149,6 +1235,11 @@ int link(const char *oldpath, const char *newpath)
 {
 	typedef BOOL WINAPI (*T)(const char*, const char*, LPSECURITY_ATTRIBUTES);
 	static T create_hard_link = NULL;
+	char b_old[PATH_MAX], b_new[PATH_MAX];
+
+	oldpath = handle_special_name(b_old, oldpath, PATH_MAX);
+	newpath = handle_special_name(b_new, newpath, PATH_MAX);
+
 	if (!create_hard_link) {
 		create_hard_link = (T) GetProcAddress(
 			GetModuleHandle("kernel32.dll"), "CreateHardLinkA");
@@ -1243,5 +1334,9 @@ struct dirent *mingw_readdir(DIR *dir)
 #undef mkdir
 int mingw_mkdir(const char *path, int mode)
 {
+	char buffer[MAX_PATH];
+
+	path = handle_special_name(buffer, path, MAX_PATH);
+
 	return mkdir(path);
 }

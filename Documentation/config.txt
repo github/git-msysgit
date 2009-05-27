@@ -135,6 +135,21 @@ core.trustctime::
 	crawlers and some backup systems).
 	See linkgit:git-update-index[1]. True by default.
 
+core.specialfilenames::
+	Boolean. Set this to true if you are on Windows and your repository
+	contains file names that are reserved on Windows systems.
+	Special file names are (after stripping the file extension)
+	CON, PRN, AUX, NUL, COM1, COM2, COM3, COM4, COM5, COM6,
+	COM7, COM8, COM9, LPT1, LPT2, LPT3, LPT4, LPT5, LPT6, LPT7,
+	LPT8, LPT9.
+	*NOTE:* Even though git will be able to handle these files (create,
+	modify, remove), your tools (explorer, editor, compiler...) will
+	most likely still not be able to work with them. The purpose of this
+	feature is to allow you to successfully check out a commit that has
+	such files.
+	For further information refer to:
+	http://msdn.microsoft.com/en-us/library/aa365247.aspx
+
 core.quotepath::
 	The commands that output paths (e.g. 'ls-files',
 	'diff'), when not given the `-z` option, will quote

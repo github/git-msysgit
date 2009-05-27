@@ -184,6 +184,9 @@ static inline unsigned int git_ntohl(unsigned int x)
 sig_handler_t mingw_signal(int sig, sig_handler_t handler);
 #define signal mingw_signal
 
+int mingw_rmdir(const char *path);
+#define rmdir mingw_rmdir
+
 /*
  * ANSI emulation wrappers
  */
