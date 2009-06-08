@@ -932,21 +932,12 @@ int mingw_connect(int sockfd, struct sockaddr *sa, size_t sz)
 	return connect(s, sa, sz);
 }
 
-#undef rename
-int mingw_rename(const char *pold, const char *pnew)
+static int move_file_replace(const char *pold, const char *pnew)
 {
 	DWORD attrs, gle;
 	int tries = 0;
 	static const int delay[] = { 0, 1, 10, 20, 40 };
 
-	/*
-	 * Try native rename() first to get errno right.
-	 * It is based on MoveFile(), which cannot overwrite existing files.
-	 */
-	if (!rename(pold, pnew))
-		return 0;
-	if (errno != EEXIST)
-		return -1;
 repeat:
 	if (MoveFileEx(pold, pnew, MOVEFILE_REPLACE_EXISTING))
 		return 0;
@@ -980,6 +971,57 @@ repeat:
 		goto repeat;
 	}
 	errno = EACCES;
+	return -1;
+}
+
+#undef rename
+int mingw_rename(const char *pold, const char *pnew)
+{
+	int fd;
+	struct strbuf tmp = STRBUF_INIT;
+	const char *slash, *backslash;
+
+	/*
+	 * Try native rename() first to get errno right.
+	 * It is based on MoveFile(), which cannot overwrite existing files.
+	 */
+	if (!rename(pold, pnew))
+		return 0;
+	if (errno != EEXIST)
+		return -1;
+	if (!pnew) {
+		errno = EINVAL;
+		return -1;
+	}
+	/*
+	 * Windows' case-insensitivity does not allow it to directly
+	 * do a rename where the only change in the file name is
+	 * the change of a letter case. Work this around with a
+	 * temporary file.
+	 */
+	strbuf_addstr(&tmp, pnew);
+	slash = strrchr(tmp.buf, '/');
+	backslash = strrchr(tmp.buf, '\\');
+	if (!slash || slash < backslash)
+		slash = backslash;
+	strbuf_setlen(&tmp, slash ? slash + 1 - tmp.buf : 0);
+	strbuf_addstr(&tmp, "XXXXXX");
+	fd = mkstemp(tmp.buf);
+	if (fd < 0)
+		errno = ENOMEM;
+	else {
+		close(fd);
+		if (move_file_replace(pold, tmp.buf)) {
+			int save = errno;
+			unlink(tmp.buf);
+			errno = save;
+		}
+		else if (!move_file_replace(tmp.buf, pnew)) {
+			strbuf_release(&tmp);
+			return 0;
+		}
+	}
+	strbuf_release(&tmp);
 	return -1;
 }
 
