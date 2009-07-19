@@ -24,6 +24,9 @@ static inline void filetime_to_timespec(const FILETIME *ft, struct timespec *ts)
 static int do_stat(const char *file_name, struct stat *buf, stat_fn_t cygstat)
 {
 	WIN32_FILE_ATTRIBUTE_DATA fdata;
+	char buffer[PATH_MAX];
+
+	file_name = handle_special_name(buffer, file_name, PATH_MAX);
 
 	if (file_name[0] == '/')
 		return cygstat (file_name, buf);
@@ -141,3 +144,74 @@ static int cygwin_lstat_stub(const char *file_name, struct stat *buf)
 stat_fn_t cygwin_stat_fn = cygwin_stat_stub;
 stat_fn_t cygwin_lstat_fn = cygwin_lstat_stub;
 
+#undef unlink
+int cygwin_unlink(const char *path)
+{
+	char buffer[PATH_MAX];
+	path = handle_special_name(buffer, path, PATH_MAX);
+	return unlink(path);
+}
+
+#undef open
+int cygwin_open (const char *path, int oflags, ...)
+{
+	va_list args;
+	unsigned int mode;
+	char buffer[PATH_MAX];
+
+	va_start(args, oflags);
+	mode = va_arg(args, int);
+	va_end(args);
+
+	path = handle_special_name(buffer, path, PATH_MAX);
+
+	return open(path, oflags, mode);
+}
+
+#undef utime
+int cygwin_utime(const char *path, const struct utimbuf *times)
+{
+	char buffer[PATH_MAX];
+	path = handle_special_name(buffer, path, PATH_MAX);
+	return utime(path, times);
+}
+
+#undef rename
+int cygwin_rename(const char *src, const char *dest)
+{
+	char buffer1[PATH_MAX];
+	char buffer2[PATH_MAX];
+
+	src = handle_special_name(buffer1, src, PATH_MAX);
+	dest = handle_special_name(buffer2, dest, PATH_MAX);
+
+	return rename(src, dest);
+}
+
+#undef rmdir
+int cygwin_rmdir(const char *path)
+{
+	char buffer[PATH_MAX];
+	path = handle_special_name(buffer, path, PATH_MAX);
+	return rmdir(path);
+}
+
+#undef link
+int cygwin_link(const char *oldpath, const char *newpath)
+{
+	char buffer1[PATH_MAX];
+	char buffer2[PATH_MAX];
+
+	oldpath = handle_special_name(buffer1, oldpath, PATH_MAX);
+	newpath = handle_special_name(buffer2, newpath, PATH_MAX);
+
+	return link(oldpath, newpath);
+}
+
+#undef mkdir
+int cygwin_mkdir(const char *path, int mode)
+{
+	char buffer[PATH_MAX];
+	path = handle_special_name(buffer, path, PATH_MAX);
+	return mkdir(path, mode);
+}
