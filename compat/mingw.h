@@ -96,20 +96,6 @@ static inline int fcntl(int fd, int cmd, long arg)
  * simple adaptors
  */
 
-static inline int mingw_mkdir(const char *path, int mode)
-{
-	return mkdir(path);
-}
-#define mkdir mingw_mkdir
-
-static inline int mingw_unlink(const char *pathname)
-{
-	/* read-only files cannot be removed */
-	chmod(pathname, 0666);
-	return unlink(pathname);
-}
-#define unlink mingw_unlink
-
 static inline int waitpid(pid_t pid, int *status, unsigned options)
 {
 	if (options == 0)
@@ -141,8 +127,27 @@ int readlink(const char *path, char *buf, size_t bufsiz);
  * replacements of existing functions
  */
 
-int mingw_open (const char *filename, int oflags, ...);
+int mingw_open(const char *filename, int oflags, ...);
 #define open mingw_open
+
+FILE *mingw_fopen(const char *path, const char *mode);
+#define fopen mingw_fopen
+
+int mingw_access(const char *filename, int mode);
+#undef access
+#define access mingw_access
+
+int mingw_chdir(const char *path);
+#define chdir mingw_chdir
+
+int mingw_mkdir(const char *path, int mode);
+#define mkdir mingw_mkdir
+
+int mingw_rmdir(const char *path);
+#define rmdir mingw_rmdir
+
+int mingw_unlink(const char *file_name);
+#define unlink mingw_unlink
 
 char *mingw_getcwd(char *pointer, int len);
 #define getcwd mingw_getcwd
@@ -249,7 +254,6 @@ int main(int argc, const char **argv) \
 } \
 static int mingw_main(c,v)
 
-#ifndef NO_MINGW_REPLACE_READDIR
 /*
  * A replacement of readdir, to ensure that it reads the file type at
  * the same time. This avoid extra unneeded lstats in git on MinGW
@@ -274,6 +278,12 @@ struct mingw_dirent
 	char		d_name[FILENAME_MAX];	/* File name. */
 };
 #define dirent mingw_dirent
-#define readdir(x) mingw_readdir(x)
+
+DIR *mingw_opendir(const char *name);
+#define opendir mingw_opendir
+
+int mingw_closedir(DIR *dir);
+#define closedir mingw_closedir
+
 struct dirent *mingw_readdir(DIR *dir);
-#endif // !NO_MINGW_REPLACE_READDIR
+#define readdir mingw_readdir

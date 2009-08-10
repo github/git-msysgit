@@ -2,6 +2,7 @@
 #include "win32.h"
 #include <conio.h>
 #include <winioctl.h>
+#include <wchar.h>
 #include "../strbuf.h"
 
 unsigned int _CRT_fmode = _O_BINARY;
@@ -119,7 +120,71 @@ static int err_win_to_posix(DWORD winerr)
 	return error;
 }
 
-#undef open
+static inline wchar_t *utf8_to_wchar(const char *src)
+{
+	/* Add room for some extra characters, as there are path
+	 * manipulations done in e.g. opendir().
+	 */
+	static wchar_t buffer[4][PATH_MAX+4];
+	static int counter = 0;
+	int result;
+
+	if (!src)
+		return NULL;
+
+	if (++counter >= ARRAY_SIZE(buffer))
+		counter = 0;
+
+	result = MultiByteToWideChar(CP_UTF8, 0, src, -1,
+			buffer[counter], PATH_MAX);
+	if (result >= 0)
+		return buffer[counter];
+	error("Could not convert utf8 '%s' to widechars: %s", src,
+		result == ERROR_INSUFFICIENT_BUFFER ? "name too long" :
+		result == ERROR_NO_UNICODE_TRANSLATION ? "unicode lacking" :
+			"flags/parameter error");
+	return NULL;
+}
+
+/* UTF-8 aware wcstombs replacement */
+static inline size_t mingw_wcstombs(char *dst, const wchar_t *src, size_t length)
+{
+	int result;
+
+	if (!src)
+		return -1;
+	/* Only a length check? wcstombs indicates this with !dst,
+	 * WideCharToMultiByte uses !length
+	 */
+	if (!dst)
+		length = 0;
+	result = WideCharToMultiByte(CP_UTF8, 0, src, -1,
+			dst, length, NULL, NULL);
+	if (result > 0) {
+		if (! length)
+			return result-1;
+
+		/* WideCharToMultiByte returns size with zero-terminator.
+		 * wcstombs returns size without zero-terminator.
+		 */
+		if (dst[result-1] == 0)
+			result--;
+		else if (result == length)
+			dst[length-1] = 0;
+		else
+			dst[result] = 0;
+
+		return result;
+	}
+	error("Could not convert widechar '%ls' to utf8: %s", src,
+		result == ERROR_INSUFFICIENT_BUFFER ? "name too long" :
+		result == ERROR_NO_UNICODE_TRANSLATION ? "unicode lacking" :
+			"flags/parameter error");
+	return -1;
+}
+#undef wcstombs
+#define wcstombs mingw_wcstombs
+
 int mingw_open (const char *filename, int oflags, ...)
 {
 	va_list args;
@@ -130,13 +195,43 @@ int mingw_open (const char *filename, int oflags, ...)
 
 	if (!strcmp(filename, "/dev/null"))
 		filename = "nul";
-	int fd = open(filename, oflags, mode);
+	int fd = _wopen(utf8_to_wchar(filename), oflags, mode);
 	if (fd < 0 && (oflags & O_CREAT) && errno == EACCES) {
 		DWORD attrs = GetFileAttributes(filename);
 		if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
 			errno = EISDIR;
 	}
 	return fd;
+}
+
+FILE *mingw_fopen(const char *path, const char *mode)
+{
+	return _wfopen(utf8_to_wchar(path), utf8_to_wchar(mode));
+}
+
+int mingw_access(const char *filename, int mode)
+{
+	return _waccess(utf8_to_wchar(filename), mode);
+}
+
+int mingw_unlink(const  char *filename)
+{
+	return _wunlink(utf8_to_wchar(filename));
+}
+
+int mingw_chdir(const char *path)
+{
+	return _wchdir(utf8_to_wchar(path));
+}
+
+int mingw_mkdir(const char *path, int mode)
+{
+	return _wmkdir(utf8_to_wchar(path));
+}
+
+int mingw_rmdir(const char *path)
+{
+	return _wrmdir(utf8_to_wchar(path));
 }
 
 static inline time_t filetime_to_time_t(const FILETIME *ft)
@@ -147,44 +242,75 @@ static inline time_t filetime_to_time_t(const FILETIME *ft)
 	return (time_t)winTime;
 }
 
+static int do_readlink(const wchar_t *path, wchar_t *buf, size_t bufsiz)
+{
+	HANDLE handle = CreateFileW(path, GENERIC_READ,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			NULL, OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+			NULL);
+
+	if (handle != INVALID_HANDLE_VALUE) {
+		unsigned char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+		DWORD dummy = 0;
+		if (DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, NULL, 0, buffer,
+			MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &dummy, NULL)) {
+			REPARSE_DATA_BUFFER *b = (REPARSE_DATA_BUFFER *) buffer;
+			if (b->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
+				int len = b->SymbolicLinkReparseBuffer.SubstituteNameLength / sizeof(wchar_t);
+				int offset = b->SymbolicLinkReparseBuffer.SubstituteNameOffset / sizeof(wchar_t);
+				len = (bufsiz < len) ? bufsiz : len;
+				wcsncpy(buf, & b->SymbolicLinkReparseBuffer.PathBuffer[offset], len);
+				buf[len] = 0;
+				CloseHandle(handle);
+				return len;
+			}
+		}
+
+		CloseHandle(handle);
+	}
+
+	errno = EINVAL;
+	return -1;
+}
+
 /* We keep the do_lstat code in a separate function to avoid recursion.
  * When a path ends with a slash, the stat will fail with ENOENT. In
  * this case, we strip the trailing slashes and stat again.
  */
-static int do_lstat(const char *file_name, struct stat *buf)
+static int do_lstat(const wchar_t *file_name, struct stat *buf)
 {
-	WIN32_FILE_ATTRIBUTE_DATA fdata;
+	WIN32_FIND_DATAW fdata;
+	HANDLE handle = FindFirstFileW(file_name, &fdata);
 
-	if (!(errno = get_file_attr(file_name, &fdata))) {
-		buf->st_ino = 0;
-		buf->st_gid = 0;
-		buf->st_uid = 0;
-		buf->st_nlink = 1;
-		buf->st_mode = file_attr_to_st_mode(fdata.dwFileAttributes);
-		buf->st_size = fdata.nFileSizeLow |
-			(((off_t)fdata.nFileSizeHigh)<<32);
-		buf->st_dev = buf->st_rdev = 0; /* not used by Git */
-		buf->st_atime = filetime_to_time_t(&(fdata.ftLastAccessTime));
-		buf->st_mtime = filetime_to_time_t(&(fdata.ftLastWriteTime));
-		buf->st_ctime = filetime_to_time_t(&(fdata.ftCreationTime));
-		if (fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-			WIN32_FIND_DATAA findbuf;
-			HANDLE handle = FindFirstFileA(file_name, &findbuf);
-			if (handle != INVALID_HANDLE_VALUE) {
-				if ((findbuf.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
-						(findbuf.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
-					char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
-					buf->st_mode = S_IREAD | S_IFLNK;
-					if (!(findbuf.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
-						buf->st_mode |= S_IWRITE;
-					buf->st_size = readlink(file_name, buffer, MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
-				}
-				FindClose(handle);
-			}
-		}
-		return 0;
+	if (handle == INVALID_HANDLE_VALUE) {
+		errno = err_win_to_posix(GetLastError());
+		return -1;
 	}
-	return -1;
+
+	FindClose(handle);
+
+	buf->st_ino = 0;
+	buf->st_gid = 0;
+	buf->st_uid = 0;
+	buf->st_nlink = 1;
+	buf->st_mode = file_attr_to_st_mode(fdata.dwFileAttributes);
+	buf->st_size = fdata.nFileSizeLow |
+		(((off_t)fdata.nFileSizeHigh)<<32);
+	buf->st_dev = buf->st_rdev = 0; /* not used by Git */
+	buf->st_atime = filetime_to_time_t(&(fdata.ftLastAccessTime));
+	buf->st_mtime = filetime_to_time_t(&(fdata.ftLastWriteTime));
+	buf->st_ctime = filetime_to_time_t(&(fdata.ftCreationTime));
+	if ((fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+			(fdata.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
+		wchar_t buffer[MAX_PATH];
+		buf->st_mode = S_IREAD | S_IFLNK;
+		if (!(fdata.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
+			buf->st_mode |= S_IWRITE;
+		if (do_readlink(file_name, buffer, MAX_PATH) != -1)
+			buf->st_size = wcstombs(NULL, buffer, 0);
+	}
+	return 0;
 }
 
 /* We provide our own lstat/fstat functions, since the provided
@@ -196,9 +322,10 @@ static int do_lstat(const char *file_name, struct stat *buf)
 int mingw_lstat(const char *file_name, struct stat *buf)
 {
 	int namelen;
-	static char alt_name[PATH_MAX];
 
-	if (!do_lstat(file_name, buf))
+	wchar_t *file_name_w = utf8_to_wchar(file_name);
+
+	if (!do_lstat(file_name_w, buf))
 		return 0;
 
 	/* if file_name ended in a '/', Windows returned ENOENT;
@@ -207,17 +334,17 @@ int mingw_lstat(const char *file_name, struct stat *buf)
 	if (errno != ENOENT)
 		return -1;
 
-	namelen = strlen(file_name);
-	if (namelen && file_name[namelen-1] != '/')
+	namelen = wcslen(file_name_w);
+
+	if (namelen && file_name_w[namelen-1] != L'/')
 		return -1;
-	while (namelen && file_name[namelen-1] == '/')
+	while (namelen && file_name_w[namelen-1] == L'/')
 		--namelen;
 	if (!namelen || namelen >= PATH_MAX)
 		return -1;
 
-	memcpy(alt_name, file_name, namelen);
-	alt_name[namelen] = 0;
-	return do_lstat(alt_name, buf);
+	file_name_w[namelen] = 0;
+	return do_lstat(file_name_w, buf);
 }
 
 #undef fstat
@@ -265,7 +392,7 @@ int mingw_utime (const char *file_name, const struct utimbuf *times)
 	int fh, rc;
 
 	/* must have write permission */
-	if ((fh = open(file_name, O_RDWR | O_BINARY)) < 0)
+	if ((fh = _wopen(utf8_to_wchar(file_name), O_RDWR | O_BINARY)) < 0)
 		return -1;
 
 	time_t_to_filetime(times->modtime, &mft);
@@ -287,10 +414,11 @@ unsigned int sleep (unsigned int seconds)
 
 int mkstemp(char *template)
 {
-	char *filename = mktemp(template);
+	wchar_t *filename = _wmktemp(utf8_to_wchar(template));
 	if (filename == NULL)
 		return -1;
-	return open(filename, O_RDWR | O_CREAT, 0600);
+	wcstombs(template, filename, strlen(template)+1);
+	return _wopen(filename, O_RDWR | O_CREAT, 0600);
 }
 
 int gettimeofday(struct timeval *tv, void *tz)
@@ -435,17 +563,22 @@ struct tm *localtime_r(const time_t *timep, struct tm *result)
 	return result;
 }
 
-#undef getcwd
 char *mingw_getcwd(char *pointer, int len)
 {
 	int i;
-	char *ret = getcwd(pointer, len);
+	wchar_t buffer[PATH_MAX];
+	wchar_t *ret = _wgetcwd(buffer, PATH_MAX);
+	/* _wgetcwd sets errno correctly. */
 	if (!ret)
-		return ret;
-	for (i = 0; pointer[i]; i++)
-		if (pointer[i] == '\\')
-			pointer[i] = '/';
-	return ret;
+		return NULL;
+	for (i = 0; buffer[i]; i++)
+		if (buffer[i] == L'\\')
+			buffer[i] = L'/';
+	if (wcstombs(pointer, buffer, len) >= len) {
+		errno = ERANGE;
+		return NULL;
+	}
+	return pointer;
 }
 
 #undef getenv
@@ -1130,29 +1263,31 @@ int mingw_rename(const char *pold, const char *pnew)
 	DWORD attrs, gle;
 	int tries = 0;
 	static const int delay[] = { 0, 1, 10, 20, 40 };
+	const wchar_t *poldw = utf8_to_wchar(pold);
+	const wchar_t *pneww = utf8_to_wchar(pnew);
 
 	/*
 	 * Try native rename() first to get errno right.
 	 * It is based on MoveFile(), which cannot overwrite existing files.
 	 */
-	if (!rename(pold, pnew))
+	if (!_wrename(poldw, pneww))
 		return 0;
 	if (errno != EEXIST)
 		return -1;
 repeat:
-	if (MoveFileEx(pold, pnew, MOVEFILE_REPLACE_EXISTING))
+	if (MoveFileExW(poldw, pneww, MOVEFILE_REPLACE_EXISTING))
 		return 0;
 	/* TODO: translate more errors */
 	gle = GetLastError();
 	if (gle == ERROR_ACCESS_DENIED &&
-	    (attrs = GetFileAttributes(pnew)) != INVALID_FILE_ATTRIBUTES) {
+	    (attrs = GetFileAttributesW(pneww)) != INVALID_FILE_ATTRIBUTES) {
 		if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
 			errno = EISDIR;
 			return -1;
 		}
 		if ((attrs & FILE_ATTRIBUTE_READONLY) &&
-		    SetFileAttributes(pnew, attrs & ~FILE_ATTRIBUTE_READONLY)) {
-			if (MoveFileEx(pold, pnew, MOVEFILE_REPLACE_EXISTING))
+		    SetFileAttributesW(pneww, attrs & ~FILE_ATTRIBUTE_READONLY)) {
+			if (MoveFileExW(poldw, pneww, MOVEFILE_REPLACE_EXISTING))
 				return 0;
 			gle = GetLastError();
 			/* revert file attributes on failure */
@@ -1331,11 +1466,11 @@ void mingw_open_html(const char *unixpath)
 
 int link(const char *oldpath, const char *newpath)
 {
-	typedef BOOL WINAPI (*T)(const char*, const char*, LPSECURITY_ATTRIBUTES);
+	typedef BOOL WINAPI (*T)(const wchar_t*, const wchar_t*, LPSECURITY_ATTRIBUTES);
 	static T create_hard_link = NULL;
 	if (!create_hard_link) {
 		create_hard_link = (T) GetProcAddress(
-			GetModuleHandle("kernel32.dll"), "CreateHardLinkA");
+			GetModuleHandle("kernel32.dll"), "CreateHardLinkW");
 		if (!create_hard_link)
 			create_hard_link = (T)-1;
 	}
@@ -1343,7 +1478,7 @@ int link(const char *oldpath, const char *newpath)
 		errno = ENOSYS;
 		return -1;
 	}
-	if (!create_hard_link(newpath, oldpath, NULL)) {
+	if (!create_hard_link(utf8_to_wchar(newpath), utf8_to_wchar(oldpath), NULL)) {
 		errno = err_win_to_posix(GetLastError());
 		return -1;
 	}
@@ -1352,11 +1487,11 @@ int link(const char *oldpath, const char *newpath)
 
 int symlink(const char *oldpath, const char *newpath)
 {
-	typedef BOOL WINAPI (*symlink_fn)(const char*, const char*, DWORD);
+	typedef BOOL WINAPI (*symlink_fn)(const wchar_t*, const wchar_t*, DWORD);
 	static symlink_fn create_symbolic_link = NULL;
 	if (!create_symbolic_link) {
 		create_symbolic_link = (symlink_fn) GetProcAddress(
-				GetModuleHandle("kernel32.dll"), "CreateSymbolicLinkA");
+				GetModuleHandle("kernel32.dll"), "CreateSymbolicLinkW");
 		if (!create_symbolic_link)
 			create_symbolic_link = (symlink_fn)-1;
 	}
@@ -1365,7 +1500,7 @@ int symlink(const char *oldpath, const char *newpath)
 		return -1;
 	}
 
-	if (!create_symbolic_link(newpath, oldpath, 0)) {
+	if (!create_symbolic_link(utf8_to_wchar(newpath), utf8_to_wchar(oldpath), 0)) {
 		errno = err_win_to_posix(GetLastError());
 		return -1;
 	}
@@ -1374,31 +1509,11 @@ int symlink(const char *oldpath, const char *newpath)
 
 int readlink(const char *path, char *buf, size_t bufsiz)
 {
-	HANDLE handle = CreateFile(path, GENERIC_READ,
-			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-			NULL, OPEN_EXISTING,
-			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-			NULL);
-
-	if (handle != INVALID_HANDLE_VALUE) {
-		unsigned char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
-		DWORD dummy = 0;
-		if (DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, NULL, 0, buffer,
-			MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &dummy, NULL)) {
-			REPARSE_DATA_BUFFER *b = (REPARSE_DATA_BUFFER *) buffer;
-			if (b->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
-				int len = b->SymbolicLinkReparseBuffer.SubstituteNameLength / sizeof(wchar_t);
-				int offset = b->SymbolicLinkReparseBuffer.SubstituteNameOffset / sizeof(wchar_t);
-				snprintf(buf, bufsiz, "%*ls", len,  & b->SymbolicLinkReparseBuffer.PathBuffer[offset]);
-				CloseHandle(handle);
-				return len;
-			}
-		}
-
-		CloseHandle(handle);
+	wchar_t buffer[MAX_PATH];
+	int result = do_readlink(utf8_to_wchar(path), buffer, MAX_PATH);
+	if (result >= 0) {
+		return wcstombs(buf, buffer, bufsiz);
 	}
-
-	errno = EINVAL;
 	return -1;
 }
 
@@ -1417,64 +1532,80 @@ char *getpass(const char *prompt)
 	return strbuf_detach(&buf, NULL);
 }
 
-#ifndef NO_MINGW_REPLACE_READDIR
-/* MinGW readdir implementation to avoid extra lstats for Git */
+/* MinGW readdir implementation to avoid extra lstats for Git. */
 struct mingw_DIR
 {
-	struct _finddata_t	dd_dta;		/* disk transfer area for this dir */
-	struct mingw_dirent	dd_dir;		/* Our own implementation, including d_type */
-	long			dd_handle;	/* _findnext handle */
-	int			dd_stat; 	/* 0 = next entry to read is first entry, -1 = off the end, positive = 0 based index of next entry */
-	char			dd_name[1]; 	/* given path for dir with search pattern (struct is extended) */
+	HANDLE handle;
+	WIN32_FIND_DATAW findbuf;
+	struct dirent entry;
+	int first;
 };
 
-struct dirent *mingw_readdir(DIR *dir)
+DIR *mingw_opendir(const char *name)
 {
-	WIN32_FIND_DATAA buf;
-	HANDLE handle;
-	struct mingw_DIR *mdir = (struct mingw_DIR*)dir;
+		struct mingw_DIR *dir = xmalloc(sizeof(struct mingw_DIR));
+	memset(dir, 0, sizeof(struct mingw_DIR));
 
-	if (!dir->dd_handle) {
-		errno = EBADF; /* No set_errno for mingw */
-		return NULL;
+	wchar_t *wname = utf8_to_wchar(name);
+	int len = wcslen(wname);
+	if (len > 0) {
+		if (wname[len-1] != L'/')
+			wname[len++] = L'/';
+		wname[len++] = L'*';
+		wname[len] = 0;
 	}
 
-	if (dir->dd_handle == (long)INVALID_HANDLE_VALUE && dir->dd_stat == 0)
-	{
-		handle = FindFirstFileA(dir->dd_name, &buf);
-		DWORD lasterr = GetLastError();
-		dir->dd_handle = (long)handle;
-		if (handle == INVALID_HANDLE_VALUE && (lasterr != ERROR_NO_MORE_FILES)) {
-			errno = err_win_to_posix(lasterr);
+	dir->first = 1;
+	dir->handle = FindFirstFileW(wname, & dir->findbuf);
+	DWORD lasterr = GetLastError();
+
+	if (dir->handle == INVALID_HANDLE_VALUE) {
+		errno = err_win_to_posix(lasterr);
+		free(dir);
+		return NULL;
+	}
+	return (DIR *) dir;
+}
+
+int mingw_closedir(DIR *indir)
+{
+	struct mingw_DIR *dir = (struct mingw_DIR *) indir;
+	HANDLE handle = dir->handle;
+	free(dir);
+
+	if (! FindClose(handle)) {
+		errno = err_win_to_posix(GetLastError());
+		return -1;
+	}
+	return 0;
+}
+
+struct dirent *mingw_readdir(DIR *indir)
+{
+	struct mingw_DIR *dir = (struct mingw_DIR*)indir;
+
+	if (dir->first)
+		dir->first = 0;
+	else {
+		if (! FindNextFileW(dir->handle, & dir->findbuf)) {
+			DWORD lasterr = GetLastError();
+			if (lasterr != ERROR_NO_MORE_FILES)
+				errno = err_win_to_posix(lasterr);
 			return NULL;
 		}
-	} else if (dir->dd_handle == (long)INVALID_HANDLE_VALUE) {
-		return NULL;
-	} else if (!FindNextFileA((HANDLE)dir->dd_handle, &buf)) {
-		DWORD lasterr = GetLastError();
-		FindClose((HANDLE)dir->dd_handle);
-		dir->dd_handle = (long)INVALID_HANDLE_VALUE;
-		/* POSIX says you shouldn't set errno when readdir can't
-		   find any more files; so, if another error we leave it set. */
-		if (lasterr != ERROR_NO_MORE_FILES)
-			errno = err_win_to_posix(lasterr);
-		return NULL;
 	}
 
-	/* We get here if `buf' contains valid data.  */
-	strcpy(dir->dd_dir.d_name, buf.cFileName);
-	++dir->dd_stat;
+	wcstombs(dir->entry.d_name, dir->findbuf.cFileName, FILENAME_MAX);
 
 	/* Set file type, based on WIN32_FIND_DATA */
-	mdir->dd_dir.d_type = 0;
-	if ((buf.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
-			(buf.dwReserved0 == IO_REPARSE_TAG_SYMLINK))
-		mdir->dd_dir.d_type |= DT_LNK;
-	else if (buf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-		mdir->dd_dir.d_type |= DT_DIR;
+	dir->entry.d_type = 0;
+	if ((dir->findbuf.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+			(dir->findbuf.dwReserved0 == IO_REPARSE_TAG_SYMLINK))
+		dir->entry.d_type |= DT_LNK;
+	else if (dir->findbuf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		dir->entry.d_type |= DT_DIR;
 	else
-		mdir->dd_dir.d_type |= DT_REG;
+		dir->entry.d_type |= DT_REG;
 
-	return (struct dirent*)&dir->dd_dir;
+	return & dir->entry;
 }
-#endif // !NO_MINGW_REPLACE_READDIR
