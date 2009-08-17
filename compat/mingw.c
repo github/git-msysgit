@@ -192,13 +192,14 @@ int mingw_open (const char *filename, int oflags, ...)
 {
 	va_list args;
 	unsigned mode;
+	int fd;
 	va_start(args, oflags);
 	mode = va_arg(args, int);
 	va_end(args);
 
 	if (!strcmp(filename, "/dev/null"))
 		filename = "nul";
-	int fd = _wopen(utf8_to_wchar(filename), oflags, mode);
+	fd = _wopen(utf8_to_wchar(filename), oflags | O_BINARY, mode);
 	if (fd < 0 && (oflags & O_CREAT) && errno == EACCES) {
 		DWORD attrs = GetFileAttributes(filename);
 		if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
@@ -424,7 +425,7 @@ int mkstemp(char *template)
 	if (filename == NULL)
 		return -1;
 	wcstombs(template, filename, strlen(template)+1);
-	return _wopen(filename, O_RDWR | O_CREAT, 0600);
+	return _wopen(filename, O_RDWR | O_CREAT | O_BINARY, 0600);
 }
 
 int gettimeofday(struct timeval *tv, void *tz)
