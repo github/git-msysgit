@@ -1,0 +1,28 @@
+#!/bin/sh
+# Tcl ignores the next line -*- tcl -*- \
+exec wish "$0" -- "$@"
+
+wm withdraw .
+
+# This is an implementation of a simple yes no dialog
+# which is injected into the git commandline by git gui
+# in case a yesno question needs to be answered.
+
+if {$argc < 1} {
+	puts stderr "Usage: $argv0 <question>"
+	exit 1
+} else {
+	set prompt [join $argv " "]
+}
+
+set answer [tk_messageBox -message $prompt \
+		-type yesno \
+		-icon question]
+
+bind . <Key-Return> {exit 0}
+bind . <Key-Escape> {exit 1}
+
+switch -- $answer {
+	yes {exit 0}
+	no {exit 1}
+}
