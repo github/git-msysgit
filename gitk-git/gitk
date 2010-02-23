@@ -3203,10 +3203,14 @@ proc unhighlight_filelist {} {
 }
 
 proc add_flist {fl} {
-    global cflist
+    global cflist pathprefix
 
     $cflist conf -state normal
+    set l [string length $pathprefix]
     foreach f $fl {
+        if {$l > 0 && [string compare -length $l $pathprefix $f] == 0} {
+	    set f [string range $f $l end]
+	}
 	$cflist insert end "\n"
 	$cflist insert end $f [highlight_tag $f]
     }
