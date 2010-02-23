@@ -7341,6 +7341,9 @@ proc startdiff {ids} {
 
 proc path_filter {filter name} {
     foreach p $filter {
+	if {$p == "."} {
+		return 1
+	}
 	set l [string length $p]
 	if {[string index $p end] eq "/"} {
 	    if {[string compare -length $l $p $name] == 0} {
