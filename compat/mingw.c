@@ -1010,6 +1010,49 @@ static pid_t mingw_spawnve(const char *cmd, const char **argv, char **env,
 	return mingw_spawnve_fd(cmd, argv, env, NULL, prepend_cmd, 0, 1, 2);
 }
 
+/*
+ * TODO: what's the best way to determine whether we have a 32-bit or 64-bit
+ * interpreter?
+ *
+ * most probably we have to _open_ the file, seek to 0x3c, interpret the next
+ * four bytes as a little-endian 32-bit offset, then seek to that file offset
+ * (absolute, not relative) + 0x17, and look at bit 1. If it is 1, it's a
+ * 32-bit program, otherwise 64-bit (very future-proof, I must admit :-)
+ *
+ * And yes, I know, this is ugly, but this is a quick hack to demonstrate
+ * that it actually _can_ work.
+*/
+char **prepare_32bit_argv(const char **argv, char *interpreter) {
+#ifndef _WIN64
+	return NULL;
+#else
+	int count = 0;
+	char **new_argv;
+	struct strbuf wow64cmd = STRBUF_INIT;
+
+	while (argv[count++])
+		; /* do nothing */
+
+	new_argv = malloc(sizeof(*argv) * (count + 2 + !!interpreter));
+	strbuf_addf(&wow64cmd, "%s\\SysWOW64\\cmd.exe", getenv("WINDIR"));
+	new_argv[0] = strbuf_detach(&wow64cmd, NULL);
+	new_argv[1] = "/c";
+	new_argv[2] = interpreter;
+	memcpy(new_argv + 2 + !!interpreter, argv, sizeof(*argv) * count);
+
+	trace_argv_printf((const char **)new_argv, "Launching 32-bit process");
+
+	return new_argv;
+#endif
+}
+
+static void free_32bit_argv(char **argv) {
+	if (!argv)
+		return;
+	free(argv[0]);
+	free(argv);
+}
+
 pid_t mingw_spawnvpe(const char *cmd, const char **argv, char **env,
 		     const char *dir,
 		     int fhin, int fhout, int fherr)
@@ -1034,9 +1077,14 @@ pid_t mingw_spawnvpe(const char *cmd, const char **argv, char **env,
 				pid = -1;
 			}
 			else {
-				pid = mingw_spawnve_fd(iprog, argv, env, dir, 1,
-						       fhin, fhout, fherr);
+				char **argv64 = prepare_32bit_argv(argv, iprog);
+				pid = mingw_spawnve_fd(argv64 ?
+						argv64[0] : iprog, argv64 ?
+						(const char **)argv64 : argv,
+						env, dir, 1,
+						fhin, fhout, fherr);
 				free(iprog);
+				free_32bit_argv(argv64);
 			}
 			argv[0] = argv0;
 		}
@@ -1063,11 +1111,14 @@ static int try_shell_exec(const char *cmd, char *const *argv, char **env)
 	if (prog) {
 		int argc = 0;
 		const char **argv2;
+		char **argv64;
 		while (argv[argc]) argc++;
 		argv2 = xmalloc(sizeof(*argv) * (argc+1));
 		argv2[0] = (char *)cmd;	/* full path to the script file */
-		memcpy(&argv2[1], &argv[1], sizeof(*argv) * argc);
-		pid = mingw_spawnve(prog, argv2, env, 1);
+		memcpy(&argv2[1], &argv[0], sizeof(*argv) * argc);
+		argv64 = prepare_32bit_argv(argv2, prog);
+		pid = mingw_spawnve(argv64 ? argv64[0] : prog,
+				argv64 ? (const char **)argv64 : argv2, env, 1);
 		if (pid >= 0) {
 			int status;
 			if (waitpid(pid, &status, 0) < 0)
@@ -1077,6 +1128,7 @@ static int try_shell_exec(const char *cmd, char *const *argv, char **env)
 		pid = 1;	/* indicate that we tried but failed */
 		free(prog);
 		free(argv2);
+		free_32bit_argv(argv64);
 	}
 	free_path_split(path);
 	return pid;
