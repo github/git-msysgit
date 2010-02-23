@@ -7340,9 +7340,12 @@ proc startdiff {ids} {
 }
 
 proc path_filter {filter name} {
+    global pathprefix
     foreach p $filter {
 	if {$p == "."} {
-		return 1
+		set p $pathprefix
+	} else {
+		set p $pathprefix$p
 	}
 	set l [string length $p]
 	if {[string index $p end] eq "/"} {
@@ -11582,6 +11585,12 @@ tkwait visibility .
 wm title . "[file tail $argv0]: [file tail [pwd]]"
 update
 readrefs
+
+if {$cmdline_files ne {}} {
+    set pathprefix [exec git rev-parse --show-prefix]
+} else {
+    set pathprefix ""
+}
 
 if {$cmdline_files ne {} || $revtreeargs ne {} || $revtreeargscmd ne {}} {
     # create a view for the files/dirs specified on the command line
