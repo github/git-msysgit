@@ -1190,8 +1190,22 @@ ifneq (,$(wildcard ../THIS_IS_MSYSGIT))
 	EXTLIBS += /mingw/lib/libz.a
 	NO_R_TO_GCC_LINKER = YesPlease
 	INTERNAL_QSORT = YesPlease
+
+ifneq (,$(W64))
+	SNPRINTF_RETURNS_BOGUS = YesPlease
+	CROSS=/src/mingw-w64/sysroot/bin/x86_64-w64-mingw32
+	COMPAT_CFLAGS += -UNOGDI -DFORCEINLINE=
+endif
 else
 	NO_CURL = YesPlease
+endif
+ifneq (,$(CROSS))
+	CC=$(CROSS)-gcc.exe
+	AR=$(CROSS)-ar.exe
+	RANLIB=$(CROSS)-ranlib.exe
+	NO_OPENSSL=YesPlease
+	NO_ICONV=YesPlease
+	NO_CURL=YesPlease
 endif
 endif
 
