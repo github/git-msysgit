@@ -36,7 +36,11 @@ static int verify_object(const unsigned char *sha1, const char *expected_type)
 }
 
 #ifdef NO_C99_FORMAT
+#ifdef _WIN64
+#define PD_FMT "%I64d"
+#else
 #define PD_FMT "%d"
+#endif
 #else
 #define PD_FMT "%td"
 #endif

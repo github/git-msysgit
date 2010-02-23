@@ -110,7 +110,11 @@ int cmd_upload_archive(int argc, const char **argv, const char *prefix)
 		packet_write(1, "NACK pipe failed on the remote side\n");
 		die("upload-archive: %s", strerror(err));
 	}
+#ifdef _WIN64
+	writer = -1;
+#else
 	writer = fork();
+#endif
 	if (writer < 0) {
 		int err = errno;
 		packet_write(1, "NACK fork failed on the remote side\n");

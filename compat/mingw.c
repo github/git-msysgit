@@ -417,6 +417,16 @@ static inline time_t filetime_to_time_t(const FILETIME *ft)
 	return (time_t)(filetime_to_hnsec(ft) / 10000000);
 }
 
+#ifdef _WIN64
+typedef struct {
+	char *ReparseTag;
+	struct {
+		char *PathBuffer;
+		int SubstituteNameLength, SubstituteNameOffset;
+	} SymbolicLinkReparseBuffer;
+} REPARSE_DATA_BUFFER;
+#endif
+
 /* We keep the do_lstat code in a separate function to avoid recursion.
  * When a path ends with a slash, the stat will fail with ENOENT. In
  * this case, we strip the trailing slashes and stat again.

@@ -299,7 +299,7 @@ extern int git_munmap(void *start, size_t length);
 #endif
 
 #define DEFAULT_PACKED_GIT_LIMIT \
-	((1024L * 1024L) * (sizeof(void*) >= 8 ? 8192 : 256))
+	((1024L * 1024L) * (sizeof(void*) >= 8 ? 256 /* TODO: fix w64 ugliness 8192 */ : 256))
 
 #ifdef NO_PREAD
 #define pread git_pread

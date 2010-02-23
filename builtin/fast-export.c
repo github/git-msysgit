@@ -24,6 +24,8 @@ static const char *fast_export_usage[] = {
 
 static int progress;
 static enum { ABORT, VERBATIM, WARN, STRIP } signed_tag_mode = ABORT;
+#undef ERROR
+#define ERROR MYERROR
 static enum { ERROR, DROP, REWRITE } tag_of_filtered_mode = ABORT;
 static int fake_missing_tagger;
 static int no_data;

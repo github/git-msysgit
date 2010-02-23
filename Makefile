@@ -1319,6 +1319,7 @@ else
 	LIB_4_CRYPTO = $(OPENSSL_LINK) -lcrypto
 endif
 endif
+ifeq (,$(NO_ICONV))
 ifdef NEEDS_LIBICONV
 	ifdef ICONVDIR
 		BASIC_CFLAGS += -I$(ICONVDIR)/include
@@ -1327,6 +1328,7 @@ ifdef NEEDS_LIBICONV
 		ICONV_LINK =
 	endif
 	EXTLIBS += $(ICONV_LINK) -liconv
+endif
 endif
 ifdef NEEDS_LIBGEN
 	EXTLIBS += -lgen

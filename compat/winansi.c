@@ -2,6 +2,7 @@
  * Copyright 2008 Peter Harris <git@peter.is-a-geek.org>
  */
 
+#undef NOGDI
 #include "../git-compat-util.h"
 #include <malloc.h>
 #include <wingdi.h>
@@ -52,7 +53,7 @@ static void warn_if_raster_font(void)
 		return;
 
 	/* GetCurrentConsoleFontEx is available since Vista */
-	pGetCurrentConsoleFontEx = GetProcAddress(GetModuleHandle("kernel32.dll"),
+	pGetCurrentConsoleFontEx = (PGETCURRENTCONSOLEFONTEX)GetProcAddress(GetModuleHandle("kernel32.dll"),
 			"GetCurrentConsoleFontEx");
 	if (pGetCurrentConsoleFontEx) {
 		CONSOLE_FONT_INFOEX cfi;

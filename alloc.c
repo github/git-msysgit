@@ -59,7 +59,8 @@ DEFINE_ALLOCATOR(object, union any_object)
 
 static void report(const char *name, unsigned int count, size_t size)
 {
-    fprintf(stderr, "%10s: %8u (" SZ_FMT " kB)\n", name, count, size);
+// TODO: fix w64 ugliness
+    fprintf(stderr, "%10s: %8u (" SZ_FMT " kB)\n", name, count, (unsigned int)size);
 }
 
 #undef SZ_FMT

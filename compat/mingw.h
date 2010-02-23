@@ -1,11 +1,16 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef _WIN64
+#include <stdint.h>
+#endif
 
 /*
  * things that are not available in header files
  */
 
+#ifndef _WIN64
 typedef int pid_t;
+#endif
 typedef int uid_t;
 typedef int socklen_t;
 #define hstrerror strerror
@@ -14,11 +19,13 @@ typedef int socklen_t;
 #define S_ISLNK(x) (((x) & S_IFMT) == S_IFLNK)
 #define S_ISSOCK(x) 0
 
+#ifndef _WIN64
 #ifndef _STAT_H_
 #define S_IRUSR 0
 #define S_IWUSR 0
 #define S_IXUSR 0
 #define S_IRWXU (S_IRUSR | S_IWUSR | S_IXUSR)
+#endif
 #endif
 #define S_IRGRP 0
 #define S_IWGRP 0
@@ -91,8 +98,10 @@ static inline int symlink(const char *oldpath, const char *newpath)
 { errno = ENOSYS; return -1; }
 static inline int fchmod(int fildes, mode_t mode)
 { errno = ENOSYS; return -1; }
+#ifndef _WIN64
 static inline pid_t fork(void)
 { errno = ENOSYS; return -1; }
+#endif
 static inline unsigned int alarm(unsigned int seconds)
 { return 0; }
 static inline int fsync(int fd)
@@ -238,15 +247,21 @@ int mingw_getpagesize(void);
  * mingw_fstat() instead of fstat() on Windows.
  */
 #define off_t off64_t
+#undef lseek
 #define lseek _lseeki64
 #ifndef ALREADY_DECLARED_STAT_FUNCS
+#ifdef _WIN64
+#define stat _stat64
+#else
 #define stat _stati64
+#endif
 int mingw_lstat(const char *file_name, struct stat *buf);
 int mingw_stat(const char *file_name, struct stat *buf);
 int mingw_fstat(int fd, struct stat *buf);
 #define fstat mingw_fstat
 #define lstat mingw_lstat
-#define _stati64(x,y) mingw_stat(x,y)
+#undef _stati64
+#define _stati64(x,y) mingw_lstat(x,y)
 #endif
 
 int mingw_utime(const char *file_name, const struct utimbuf *times);
