@@ -514,6 +514,7 @@ cmd_summary() {
 	summary_limit=-1
 	for_status=
 	diff_cmd=diff-index
+	untracked=
 
 	# parse $args after "submodule ... summary".
 	while test $# -ne 0
@@ -527,6 +528,9 @@ cmd_summary() {
 			;;
 		--for-status)
 			for_status="$1"
+			;;
+		--ignore-untracked-in-submodules)
+			untracked="$1"
 			;;
 		-n|--summary-limit)
 			if summary_limit=$(($2 + 0)) 2>/dev/null && test "$summary_limit" = "$2"
@@ -576,7 +580,7 @@ cmd_summary() {
 
 	cd_to_toplevel
 	# Get modified modules cared by user
-	modules=$(git $diff_cmd $cached --raw $head -- "$@" |
+	modules=$(git $diff_cmd $cached $untracked --raw $head -- "$@" |
 		sane_egrep '^:([0-7]* )?160000' |
 		while read mod_src mod_dst sha1_src sha1_dst status name
 		do
@@ -590,7 +594,7 @@ cmd_summary() {
 
 	test -z "$modules" && return
 
-	git $diff_cmd $cached --raw $head -- $modules |
+	git $diff_cmd $cached $untracked --raw $head -- $modules |
 	sane_egrep '^:([0-7]* )?160000' |
 	cut -c2- |
 	while read mod_src mod_dst sha1_src sha1_dst status name
