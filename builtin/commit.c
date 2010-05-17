@@ -818,6 +818,8 @@ static void handle_untracked_files_arg(struct wt_status *s)
 		; /* default already initialized */
 	else if (!strcmp(untracked_files_arg, "no"))
 		s->show_untracked_files = SHOW_NO_UNTRACKED_FILES;
+	else if (!strcmp(untracked_files_arg, "nosubs"))
+		s->show_untracked_files = SHOW_NO_UNTRACKED_FILES_IN_SUBMODULES;
 	else if (!strcmp(untracked_files_arg, "normal"))
 		s->show_untracked_files = SHOW_NORMAL_UNTRACKED_FILES;
 	else if (!strcmp(untracked_files_arg, "all"))
@@ -1010,6 +1012,9 @@ static int git_status_config(const char *k, const char *v, void *cb)
 			return config_error_nonbool(k);
 		else if (!strcmp(v, "no"))
 			s->show_untracked_files = SHOW_NO_UNTRACKED_FILES;
+		else if (!strcmp(v, "nosubs"))
+			s->show_untracked_files =
+				SHOW_NO_UNTRACKED_FILES_IN_SUBMODULES;
 		else if (!strcmp(v, "normal"))
 			s->show_untracked_files = SHOW_NORMAL_UNTRACKED_FILES;
 		else if (!strcmp(v, "all"))

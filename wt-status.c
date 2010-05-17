@@ -307,7 +307,8 @@ static void wt_status_collect_changes_worktree(struct wt_status *s)
 	setup_revisions(0, NULL, &rev, NULL);
 	rev.diffopt.output_format |= DIFF_FORMAT_CALLBACK;
 	DIFF_OPT_SET(&rev.diffopt, DIRTY_SUBMODULES);
-	if (!s->show_untracked_files)
+	if (!s->show_untracked_files || s->show_untracked_files ==
+			SHOW_NO_UNTRACKED_FILES_IN_SUBMODULES)
 		DIFF_OPT_SET(&rev.diffopt, IGNORE_UNTRACKED_IN_SUBMODULES);
 	rev.diffopt.format_callback = wt_status_collect_changed_cb;
 	rev.diffopt.format_callback_data = s;
@@ -513,7 +514,7 @@ static void wt_status_print_changed(struct wt_status *s)
 	wt_status_print_trailer(s);
 }
 
-static void wt_status_print_submodule_summary(struct wt_status *s, int uncommitted)
+static void wt_status_print_submodule_summary(struct wt_status *s, int uncommitted, int untracked)
 {
 	struct child_process sm_summary;
 	char summary_limit[64];
@@ -526,9 +527,16 @@ static void wt_status_print_submodule_summary(struct wt_status *s, int uncommitt
 		"--for-status",
 		"--summary-limit",
 		summary_limit,
-		uncommitted ? NULL : (s->amend ? "HEAD^" : "HEAD"),
+		NULL,
+		NULL,
 		NULL
 	};
+	int count = ARRAY_SIZE(argv) - 3;
+
+	if (!untracked)
+		argv[count++] = "--ignore-untracked-in-submodules";
+	if (!uncommitted)
+		argv[count++] = s->amend ? "HEAD^" : "HEAD";
 
 	sprintf(summary_limit, "%d", s->submodule_summary);
 	snprintf(index, sizeof(index), "GIT_INDEX_FILE=%s", s->index_file);
@@ -643,8 +651,12 @@ void wt_status_print(struct wt_status *s)
 	wt_status_print_unmerged(s);
 	wt_status_print_changed(s);
 	if (s->submodule_summary) {
-		wt_status_print_submodule_summary(s, 0);  /* staged */
-		wt_status_print_submodule_summary(s, 1);  /* unstaged */
+		int untracked = s->show_untracked_files !=
+			SHOW_NO_UNTRACKED_FILES_IN_SUBMODULES;
+		/* staged */
+		wt_status_print_submodule_summary(s, 0, untracked);
+		/* unstaged */
+		wt_status_print_submodule_summary(s, 1, untracked);
 	}
 	if (s->show_untracked_files) {
 		wt_status_print_other(s, &s->untracked, "Untracked", "add");

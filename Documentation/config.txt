@@ -1700,7 +1700,8 @@ status.showUntrackedFiles::
 +
 --
 	- 'no'     - Show no untracked files
-	- 'normal' - Shows untracked files and directories
+	- 'nosubs' - Show untracked files and directories
+	- 'normal' - Shows untracked files and directories, also in submodules
 	- 'all'    - Shows also individual files in untracked directories.
 --
 +
