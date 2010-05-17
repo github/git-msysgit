@@ -2953,6 +2953,8 @@ int diff_opt_parse(struct diff_options *options, const char **av, int ac)
 		DIFF_OPT_SET(options, ALLOW_TEXTCONV);
 	else if (!strcmp(arg, "--no-textconv"))
 		DIFF_OPT_CLR(options, ALLOW_TEXTCONV);
+	else if (!strcmp(arg, "--ignore-untracked-in-submodules"))
+		DIFF_OPT_SET(options, IGNORE_UNTRACKED_IN_SUBMODULES);
 	else if (!strcmp(arg, "--ignore-submodules"))
 		DIFF_OPT_SET(options, IGNORE_SUBMODULES);
 	else if (!strcmp(arg, "--submodule"))
