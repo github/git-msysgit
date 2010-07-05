@@ -14,10 +14,12 @@ typedef int uid_t;
 #define S_ISSOCK(x) 0
 
 #ifndef _STAT_H_
+#ifndef S_IRUSR
 #define S_IRUSR 0
 #define S_IWUSR 0
 #define S_IXUSR 0
 #define S_IRWXU (S_IRUSR | S_IWUSR | S_IXUSR)
+#endif
 #endif
 #define S_IRGRP 0
 #define S_IWGRP 0
