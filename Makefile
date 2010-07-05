@@ -1076,6 +1076,7 @@ ifndef DEBUG
 	AR += -LTCG
 else
 	BASIC_CFLAGS += -Zi -MTd
+	BASIC_LDFLAGS = -DEBUG -MAP
 endif
 	X = .exe
 endif

@@ -12,10 +12,14 @@
 use strict;
 my @args = ();
 my @cflags = ();
+my @lflags = ();
 my $is_linking = 0;
+my %linkflag = ( '-DEBUG' => 1, '-MAP' => 1 );
 while (@ARGV) {
 	my $arg = shift @ARGV;
-	if ("$arg" =~ /^-[DIMGO]/) {
+	if ($linkflag{$arg}) {
+		push(@lflags, $arg);
+	} elsif ("$arg" =~ /^-[DIMGOWZ]/) {
 		push(@cflags, $arg);
 	} elsif ("$arg" eq "-o") {
 		my $file_out = shift @ARGV;
@@ -44,6 +48,7 @@ while (@ARGV) {
 }
 if ($is_linking) {
 	unshift(@args, "link.exe");
+	push(@args, @lflags);
 } else {
 	unshift(@args, "cl.exe");
 	push(@args, @cflags);
