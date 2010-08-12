@@ -236,9 +236,44 @@ int commit_lock_file(struct lock_file *lk)
 	strcpy(result_file, lk->filename);
 	i = strlen(result_file) - 5; /* .lock */
 	result_file[i] = 0;
-	if (rename(lk->filename, result_file))
+	if (file_copy_content(lk->filename, result_file))
 		return -1;
 	lk->filename[0] = 0;
+	return 0;
+}
+
+int file_copy_content(const char *src_file, const char *dst_file)
+{
+	if(src_file == NULL && dst_file == NULL)
+		return -1;
+
+	FILE *src = fopen(src_file, "r");
+	if(src == NULL)
+	{
+		//unable to open src file
+		return -1;
+	}
+
+	FILE *dst = fopen(dst_file, "w");
+	if(dst == NULL)
+	{
+		//unable to open dst file
+		fclose(src);
+		return -1;
+	}
+
+	char ch;
+	//copy content
+	while((ch=fgetc(src)) != EOF)
+	{
+		fputc(ch,dst);
+	}
+
+	//close all files
+	fclose(dst);
+	fclose(src);
+	//clean up
+	remove(src_file);
 	return 0;
 }
 
