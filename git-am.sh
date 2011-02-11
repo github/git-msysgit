@@ -818,7 +818,7 @@ do
 		fi &&
 		git commit-tree $tree ${parent:+-p} $parent <"$dotest/final-commit"
 	) &&
-	git update-ref -m "$GIT_REFLOG_ACTION: $FIRSTLINE" HEAD $commit $parent ||
+	echo "$GIT_REFLOG_ACTION: $FIRSTLINE" | git update-ref -s HEAD $commit $parent ||
 	stop_here $this
 
 	if test -f "$dotest/original-commit"; then

@@ -9,13 +9,16 @@ static const char * const git_update_ref_usage[] = {
 	NULL
 };
 
+static struct strbuf line = STRBUF_INIT;
+
 int cmd_update_ref(int argc, const char **argv, const char *prefix)
 {
 	const char *refname, *oldval, *msg=NULL;
 	unsigned char sha1[20], oldsha1[20];
-	int delete = 0, no_deref = 0, flags = 0;
+	int delete = 0, no_deref = 0, flags = 0, commentFromStdIn = 0;
 	struct option options[] = {
 		OPT_STRING( 'm', NULL, &msg, "reason", "reason of the update"),
+		OPT_BOOLEAN('s', NULL, &commentFromStdIn, "read comment from stdin"),
 		OPT_BOOLEAN('d', NULL, &delete, "deletes the reference"),
 		OPT_BOOLEAN( 0 , "no-deref", &no_deref,
 					"update <refname> not the one it points to"),
@@ -25,6 +28,15 @@ int cmd_update_ref(int argc, const char **argv, const char *prefix)
 	git_config(git_default_config, NULL);
 	argc = parse_options(argc, argv, prefix, options, git_update_ref_usage,
 			     0);
+
+	if(commentFromStdIn){
+		if (strbuf_getline(&line, stdin, '\n')){
+			die("Refusing to perform update with empty message.");
+		}else{
+			msg = line.buf;
+		}
+	}
+
 	if (msg && !*msg)
 		die("Refusing to perform update with empty message.");
 
