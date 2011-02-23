@@ -1,4 +1,12 @@
 #!/usr/bin/perl
+
+BEGIN {
+	use Cwd 'abs_path';
+	my $perl_dir = abs_path('../../perl');
+	eval "use lib '${perl_dir}/blib/lib';";
+	eval "use lib '${perl_dir}/blib/arch/auto/Git';";
+}
+
 use lib (split(/:/, $ENV{GITPERLLIB}));
 
 use 5.008;
@@ -74,6 +82,7 @@ is($r->ident_person("Name", "email", "123 +0000"), "Name <email>",
 ok(our $file1hash = $r->command_oneline('rev-parse', "HEAD:file1"), "(get file hash)");
 my $tmpfile = "file.tmp";
 open TEMPFILE, "+>$tmpfile" or die "Can't open $tmpfile: $!";
+binmode TEMPFILE;
 is($r->cat_blob($file1hash, \*TEMPFILE), 15, "cat_blob: size");
 our $blobcontents;
 { local $/; seek TEMPFILE, 0, 0; $blobcontents = <TEMPFILE>; }
@@ -81,11 +90,13 @@ is($blobcontents, "changed file 1\n", "cat_blob: data");
 close TEMPFILE or die "Failed writing to $tmpfile: $!";
 is(Git::hash_object("blob", $tmpfile), $file1hash, "hash_object: roundtrip");
 open TEMPFILE, ">$tmpfile" or die "Can't open $tmpfile: $!";
+binmode TEMPFILE;
 print TEMPFILE my $test_text = "test blob, to be inserted\n";
 close TEMPFILE or die "Failed writing to $tmpfile: $!";
 like(our $newhash = $r->hash_and_insert_object($tmpfile), qr/[0-9a-fA-F]{40}/,
      "hash_and_insert_object: returns hash");
 open TEMPFILE, "+>$tmpfile" or die "Can't open $tmpfile: $!";
+binmode TEMPFILE;
 is($r->cat_blob($newhash, \*TEMPFILE), length $test_text, "cat_blob: roundtrip size");
 { local $/; seek TEMPFILE, 0, 0; $blobcontents = <TEMPFILE>; }
 is($blobcontents, $test_text, "cat_blob: roundtrip data");
@@ -125,5 +136,7 @@ chdir($abs_repo_dir);
 
 printf "1..%d\n", Test::More->builder->current_test;
 
-my $is_passing = eval { Test::More->is_passing };
+my $is_passing = eval { Test::More->builder->is_passing }
+	|| eval { Test::More->is_passing };
 exit($is_passing ? 0 : 1) unless $@ =~ /Can't locate object method/;
+# vim:noet ts=8 sw=8 sts=8:

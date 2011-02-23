@@ -102,6 +102,7 @@ use Error qw(:try);
 use Cwd qw(abs_path cwd);
 use IPC::Open2 qw(open2);
 use Fcntl qw(SEEK_SET SEEK_CUR);
+use File::Spec ();
 }
 
 
@@ -185,7 +186,8 @@ sub repository {
 		};
 
 		if ($dir) {
-			$dir =~ m#^/# or $dir = $opts{Directory} . '/' . $dir;
+                        File::Spec->file_name_is_absolute($dir)
+				or $dir = $opts{Directory} . '/' . $dir;
 			$opts{Repository} = abs_path($dir);
 
 			# If --git-dir went ok, this shouldn't die either.
@@ -431,20 +433,31 @@ have more complicated structure.
 sub command_close_bidi_pipe {
 	local $?;
 	my ($pid, $in, $out, $ctx) = @_;
+
+	my $exit_status;
+
 	foreach my $fh ($in, $out) {
 		unless (close $fh) {
 			if ($!) {
 				carp "error closing pipe: $!";
 			} elsif ($? >> 8) {
-				throw Git::Error::Command($ctx, $? >>8);
+				$exit_status = $? >> 8;
 			}
 		}
 	}
 
-	waitpid $pid, 0;
+	{
+		local $SIG{ALRM} = sub {
+			kill -9, $pid;
+		};
+		alarm 1;
+		waitpid $pid, 0;
+		$exit_status = $? >> 8 unless $exit_status;
+		alarm 0;
+	}
 
-	if ($? >> 8) {
-		throw Git::Error::Command($ctx, $? >>8);
+	if ($exit_status) {
+		throw Git::Error::Command($ctx, $exit_status);
 	}
 }
 
@@ -1345,7 +1358,7 @@ sub TIEHANDLE {
 	# Let's just hope ActiveState Perl does at least the quoting
 	# correctly.
 	my @data = qx{git @params};
-	bless { i => 0, data => \@data }, $class;
+	bless { i => 0, data => \@data, exit_status => $? }, $class;
 }
 
 sub READLINE {
@@ -1366,6 +1379,8 @@ sub CLOSE {
 	my $self = shift;
 	delete $self->{data};
 	delete $self->{i};
+	$? = delete $self->{exit_status};
+	return not $? >> 8;
 }
 
 sub EOF {
@@ -1375,3 +1390,4 @@ sub EOF {
 
 
 1; # Famous last words
+# vim:noet ts=8 sw=8 sts=8:

@@ -3,7 +3,21 @@
 #
 makfile:=perl.mak
 
+# support PERL_PATH=C:\\Perl\\bin\\perl
+PERL_PATH := $(subst \,\\,$(PERL_PATH))
+
 PERL_PATH_SQ = $(subst ','\'',$(PERL_PATH))
+
+ifdef NO_PERL_MAKEMAKER
+	PERL_MAKE := $(MAKE)
+else
+	PERL_MAKE := MAKEFLAGS="" $(subst \,\\,$(shell $(subst \,\\,$(PERL_PATH)) -MConfig -le "print ((\%Config)->{make})"))
+endif
+
+ifneq (,$(findstring nmake,$(PERL_MAKE)))
+	PERL_MAKE := $(PERL_MAKE) -nologo
+endif
+
 prefix_SQ = $(subst ','\'',$(prefix))
 
 ifndef V
@@ -11,10 +25,10 @@ ifndef V
 endif
 
 all install instlibdir: $(makfile)
-	$(QUIET)$(MAKE) -f $(makfile) $@
+	$(QUIET)$(PERL_MAKE) -f $(makfile) $@
 
 clean:
-	$(QUIET)test -f $(makfile) && $(MAKE) -f $(makfile) $@ || exit 0
+	$(QUIET)test -f $(makfile) && ($(PERL_MAKE) -f $(makfile) $@) || exit 0
 	$(RM) ppport.h
 	$(RM) $(makfile)
 	$(RM) $(makfile).old

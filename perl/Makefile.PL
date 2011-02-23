@@ -1,10 +1,13 @@
 use ExtUtils::MakeMaker;
 
 sub MY::postamble {
-	return <<'MAKE_FRAG';
+	my $make_frag = <<'MAKE_FRAG';
 instlibdir:
 	@echo '$(INSTALLSITELIB)'
 
+MAKE_FRAG
+
+	$make_frag .= <<'MAKE_FRAG' if $^O ne 'MSWin32';
 ifneq (,$(DESTDIR))
 ifeq (0,$(shell expr '$(MM_VERSION)' '>' 6.10))
 $(error ExtUtils::MakeMaker version "$(MM_VERSION)" is older than 6.11 and so \
@@ -14,6 +17,8 @@ endif
 endif
 
 MAKE_FRAG
+
+	return $make_frag;
 }
 
 my %pm = ('Git.pm' => '$(INST_LIBDIR)/Git.pm');
