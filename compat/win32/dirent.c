@@ -13,13 +13,26 @@ DIR *opendir(const char *name)
 	DWORD attrs = GetFileAttributesA(name);
 	int len;
 	DIR *p;
+	char buff[MAX_PATH+1];
 
 	/* check for valid path */
 	if (attrs == INVALID_FILE_ATTRIBUTES) {
 		errno = ENOENT;
 		return NULL;
 	}
-
+	/* Check for reparse point. */
+	if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+		/* replace name with full path and fetch attributes for the expanded name */
+		if (win_expand_path(name,buff,MAX_PATH+1) < 0) {
+			errno = ENOTDIR;
+			return NULL;
+		}
+		name = buff;
+		if ((attrs = GetFileAttributesA(name)) == INVALID_FILE_ATTRIBUTES) {
+			errno = ENOENT;
+			return NULL;
+		}
+	}
 	/* check if it's a directory */
 	if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
 		errno = ENOTDIR;
@@ -86,7 +99,10 @@ struct dirent *readdir(DIR *dir)
 
 	/* Set file type, based on WIN32_FIND_DATA */
 	dir->dd_dir.d_type = 0;
-	if (buf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+	if ((buf.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+	    (buf.dwReserved0 == IO_REPARSE_TAG_SYMLINK))
+		dir->dd_dir.d_type |= DT_LNK;
+	else if (buf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 		dir->dd_dir.d_type |= DT_DIR;
 	else
 		dir->dd_dir.d_type |= DT_REG;

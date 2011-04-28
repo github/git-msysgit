@@ -1,6 +1,7 @@
 #include "../git-compat-util.h"
 #include "win32.h"
 #include <conio.h>
+#include <winioctl.h>
 #include "../strbuf.h"
 #include "../cache.h"
 #include "../run-command.h"
@@ -117,6 +118,7 @@ int err_win_to_posix(DWORD winerr)
 	case ERROR_WAIT_NO_CHILDREN: error = ECHILD; break;
 	case ERROR_WRITE_FAULT: error = EIO; break;
 	case ERROR_WRITE_PROTECT: error = EROFS; break;
+	case ERROR_CANT_RESOLVE_FILENAME: error = EMLINK; break;
 	}
 	return error;
 }
@@ -386,19 +388,18 @@ static inline time_t filetime_to_time_t(const FILETIME *ft)
 	return (time_t)(filetime_to_hnsec(ft) / 10000000);
 }
 
-/* We keep the do_lstat code in a separate function to avoid recursion.
+/*
+ * We keep the actual lstat code in a separate function to avoid recursion.
  * When a path ends with a slash, the stat will fail with ENOENT. In
- * this case, we strip the trailing slashes and stat again.
- *
- * If follow is true then act like stat() and report on the link
- * target. Otherwise report on the link itself.
+ * this case, mingw_lstat will strip the trailing slashes and stat again.
  */
-static int do_lstat(int follow, const char *file_name, struct stat *buf)
+static int do_lstat(const char *file_name, struct stat *buf)
 {
 	int err;
 	WIN32_FILE_ATTRIBUTE_DATA fdata;
+	char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE+1];
 
-	if (!(err = get_file_attr(file_name, &fdata))) {
+	if(!(err = get_file_attr(file_name, &fdata))) {
 		buf->st_ino = 0;
 		buf->st_gid = 0;
 		buf->st_uid = 0;
@@ -411,22 +412,20 @@ static int do_lstat(int follow, const char *file_name, struct stat *buf)
 		buf->st_mtime = filetime_to_time_t(&(fdata.ftLastWriteTime));
 		buf->st_ctime = filetime_to_time_t(&(fdata.ftCreationTime));
 		if (fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-			WIN32_FIND_DATAA findbuf;
-			HANDLE handle = FindFirstFileA(file_name, &findbuf);
-			if (handle != INVALID_HANDLE_VALUE) {
-				if ((findbuf.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
-						(findbuf.dwReserved0 == IO_REPARSE_TAG_SYMLINK)) {
-					if (follow) {
-						char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
-						buf->st_size = readlink(file_name, buffer, MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
-					} else {
-						buf->st_mode = S_IFLNK;
-					}
-					buf->st_mode |= S_IREAD;
-					if (!(findbuf.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
-						buf->st_mode |= S_IWRITE;
-				}
-				FindClose(handle);
+			int res;
+			/* readlink will only return >= 0 for "real" symbolic links,
+			   other reparse points will return an error. */
+			if ((res = readlink(file_name,
+					    buffer,
+					    MAXIMUM_REPARSE_DATA_BUFFER_SIZE+1)) >= 0) {
+				buf->st_size = res;
+				buf->st_mode = (S_IFLNK | S_IREAD);
+				if (!(fdata.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
+					buf->st_mode |= S_IWRITE;
+
+			} else {
+				/* errno set by readlink */
+				return -1;
 			}
 		}
 		return 0;
@@ -435,21 +434,23 @@ static int do_lstat(int follow, const char *file_name, struct stat *buf)
 	return -1;
 }
 
-/* We provide our own lstat/fstat functions, since the provided
+/*
+ * We provide our own lstat/fstat functions, since the provided
  * lstat/fstat functions are so slow. These stat functions are
  * tailored for Git's usage (read: fast), and are not meant to be
  * complete. Note that Git stat()s are redirected to mingw_lstat()
  * too, since Windows doesn't really handle symlinks that well.
  */
-static int do_stat_internal(int follow, const char *file_name, struct stat *buf)
+int mingw_lstat(const char *file_name, struct stat *buf)
 {
 	int namelen;
 	static char alt_name[PATH_MAX];
 
-	if (!do_lstat(follow, file_name, buf))
+	if (!do_lstat(file_name, buf))
 		return 0;
 
-	/* if file_name ended in a '/', Windows returned ENOENT;
+	/*
+	 * if file_name ended in a '/', Windows returned ENOENT;
 	 * try again without trailing slashes
 	 */
 	if (errno != ENOENT)
@@ -465,16 +466,21 @@ static int do_stat_internal(int follow, const char *file_name, struct stat *buf)
 
 	memcpy(alt_name, file_name, namelen);
 	alt_name[namelen] = 0;
-	return do_lstat(follow, alt_name, buf);
+	return do_lstat(alt_name, buf);
 }
 
-int mingw_lstat(const char *file_name, struct stat *buf)
-{
-	return do_stat_internal(0, file_name, buf);
-}
 int mingw_stat(const char *file_name, struct stat *buf)
 {
-	return do_stat_internal(1, file_name, buf);
+	char full_path[MAX_PATH+1];
+	int res = mingw_lstat(file_name, buf);
+	if (res < 0 || !(buf->st_mode & S_IFLNK)) {
+		return res;
+	}
+	/* A symbolic link -> resolve it to it's real directory or file and lstat that instead */
+	if (win_expand_path(file_name,full_path,MAX_PATH+1) < 0) {
+		return -1;
+	}
+	return mingw_lstat(full_path,buf);
 }
 
 #undef fstat
@@ -1813,4 +1819,180 @@ int mingw_offset_1st_component(const char *path)
 	}
 
 	return offset + is_dir_sep(path[offset]);
+}
+
+/*
+ * Expands a possibly relative pathname to it's absolute counterpart.
+ * We also get all symbolic links expanded to their *real* directories.
+ * Any relative links or path components containing '..' will be eliminated.
+ * Returns the length of the path (exluding terminating '\0). If this is
+ * >= abs_path_size, the function needs to be called again with larger buffer.
+ * Returns < 0 and sets 'errno' on error.
+ */
+#define PBUFSIZE (MAX_PATH+4+1) /* Should always be enough on Ansi version, incl. '\0' and UNC prefix */
+int win_expand_path(const char *rel_path, char *abs_path, const size_t abs_path_size)
+{
+	typedef DWORD (WINAPI * get_final_fn)(HANDLE,LPCSTR,DWORD,DWORD);
+
+	HANDLE h;
+	BOOLEAN res;
+	char *p;
+	static get_final_fn pGetFinalPathNameByHandle = NULL;
+	char buffer[PBUFSIZE+1];
+	char *cptr = buffer;
+
+	if (!pGetFinalPathNameByHandle) {
+		pGetFinalPathNameByHandle =
+			(get_final_fn) GetProcAddress(GetModuleHandle("kernel32.dll"),
+						      "GetFinalPathNameByHandleA");
+		if (pGetFinalPathNameByHandle == NULL) {
+			pGetFinalPathNameByHandle = (get_final_fn) -1;
+		}
+	}
+
+	if (pGetFinalPathNameByHandle == ((get_final_fn) -1)) {
+		errno = ENOSYS;
+		return -1;
+	}
+
+	h = CreateFile(rel_path, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+		       FILE_FLAG_BACKUP_SEMANTICS, NULL);
+
+	if (h == INVALID_HANDLE_VALUE) {
+		errno = EINVAL;
+		return -1;
+	}
+	/* The sizes and '\0' is a mess on different Windows versions, but as we use the Ansi version,
+	   we can supply a large enough buffer and then return sane values for the length/need.
+	   If converting this code to Unicode, the buffer needs to be able to grow up to abs_path_size
+	   for this to work. */
+	res = pGetFinalPathNameByHandle(h, cptr, PBUFSIZE,0);
+
+	if (!res) {
+		errno = err_win_to_posix(GetLastError());
+		CloseHandle(h);
+		return -1;
+	}
+	CloseHandle(h);
+	if (res >= PBUFSIZE) {
+		errno = EINVAL;
+		return -1;
+	}
+	/* Now, normalize 'res', remove UNC prefix and turn backslashes into slashes
+	   (if buffer is large enough) */
+	res = strlen(cptr);
+	if (res >= 4) {
+		res -= 4;
+		cptr +=4;
+	}
+	if (res < abs_path_size) {
+		for (p = cptr; *p != '\0'; ++p) {
+			if (*p == '\\')
+				*p = '/';
+		}
+		strncpy(abs_path,cptr,res+1);
+	}
+	return res;
+}
+
+/*
+ * Emulate symbolic links by using windows equivalent if present (Vista
+ * and later).
+ * Note: Windows distinguish between file and directory links. This
+ * function cannot properly emulate the directory links, as the target
+ * of the symbolic link need not exist (yet) and the type of the target is
+ * not supplied in the symlink interface. All links are therefore created as file
+ * links, which works OK for most purpouses, but may break certain tools.
+ */
+int symlink(const char *oldpath, const char *newpath)
+{
+	typedef BOOL WINAPI (*symlink_fn)(const char*, const char*, DWORD);
+	static symlink_fn create_symbolic_link = NULL;
+
+	char *old = malloc(strlen(oldpath)+1);
+	char *new = malloc(strlen(newpath)+1);
+	int i,len;
+
+	strcpy(old,oldpath);
+	strcpy(new,newpath);
+	len = strlen(old);
+	for(i=0;i<len;++i) {
+	  if(old[i] == '/') {
+	    old[i] = '\\';
+	  }
+	}
+
+	len = strlen(new);
+	for(i=0;i<len;++i) {
+	  if(new[i] == '/') {
+	    new[i] = '\\';
+	  }
+	}
+
+
+	if (!create_symbolic_link) {
+		create_symbolic_link = (symlink_fn) GetProcAddress(
+				GetModuleHandle("kernel32.dll"),
+				"CreateSymbolicLinkA");
+		if (!create_symbolic_link)
+			create_symbolic_link = (symlink_fn)-1;
+	}
+	if (create_symbolic_link == (symlink_fn)-1) {
+		errno = ENOSYS;
+		free(old);
+		free(new);
+		return -1;
+	}
+	if (!create_symbolic_link(new, old, 0)) {
+		errno = err_win_to_posix(GetLastError());
+		free(old);
+		free(new);
+		return -1;
+	}
+	free(old);
+	free(new);
+	return 0;
+}
+
+/*
+ * Read a reparse point that is a windows symbolic link and return the
+ * (possibly relative) link target.
+ * If an absolute target name is needed, win_expand_path should be used instead.
+ */
+int readlink(const char *path, char *buf, size_t bufsiz)
+{
+	HANDLE handle = CreateFile(path, GENERIC_READ,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			NULL, OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+			NULL);
+
+	if (handle != INVALID_HANDLE_VALUE) {
+		unsigned char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE+1]; /* make place for \0 */
+		DWORD dummy = 0;
+		WCHAR *wb;
+		if (DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, NULL, 0, buffer,
+			MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &dummy, NULL)) {
+			REPARSE_DATA_BUFFER *b = (REPARSE_DATA_BUFFER *) buffer;
+			if (b->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
+				int len =
+				  b->SymbolicLinkReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+				int offset =
+				  b->SymbolicLinkReparseBuffer.SubstituteNameOffset / sizeof(WCHAR);
+				b->SymbolicLinkReparseBuffer.PathBuffer[len+offset]=0;
+				wb = b->SymbolicLinkReparseBuffer.PathBuffer+offset;
+				  for ( ; *wb; wb++)
+				    if (*wb == L'\\')
+				      *wb = L'/';
+				snprintf(buf, bufsiz, "%ls",
+					 b->SymbolicLinkReparseBuffer.PathBuffer + offset);
+				CloseHandle(handle);
+				return len;
+			}
+		}
+		CloseHandle(handle);
+	}
+
+	errno = EINVAL;
+	return -1;
 }
