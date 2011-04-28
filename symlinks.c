@@ -301,3 +301,21 @@ void remove_scheduled_dirs(void)
 {
 	do_remove_scheduled_dirs(0);
 }
+
+int has_working_symlinks(const char *git_dir) {
+	unsigned len = strlen(git_dir);
+	static char path[PATH_MAX];
+	struct stat st1;
+
+	strcpy(path,git_dir);
+	strcpy(path + len, "tXXXXXX");
+	if (!close(xmkstemp(path)) &&
+	    !unlink(path) &&
+	    !symlink("testing", path) &&
+	    !lstat(path, &st1) &&
+	    S_ISLNK(st1.st_mode)) {
+		unlink(path); /* good */
+		return 1;
+	}
+	return 0;
+}

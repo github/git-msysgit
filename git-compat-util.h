@@ -556,4 +556,15 @@ int remove_or_warn(unsigned int mode, const char *path);
 #define get_home_directory() getenv("HOME")
 #endif
 
+int has_working_symlinks(const char *git_dir);
+
+#ifdef NO_SYMLINKS
+#ifndef NO_SYMLINK_HEAD
+#define NO_SYMLINK_HEAD
+#endif
+#define enable_symlinks(Dir) 0
+#else
+#define enable_symlinks(Dir) has_working_symlinks(Dir)
+#endif
+
 #endif
