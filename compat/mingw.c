@@ -1829,7 +1829,8 @@ int mingw_offset_1st_component(const char *path)
  * >= abs_path_size, the function needs to be called again with larger buffer.
  * Returns < 0 and sets 'errno' on error.
  */
-#define PBUFSIZE (MAX_PATH+4+1) /* Should always be enough on Ansi version, incl. '\0' and UNC prefix */
+#define PBUFSIZE (MAX_PATH+4+1) /* Should always be enough on Ansi version, 
+				   incl. '\0' and UNC prefix */
 int win_expand_path(const char *rel_path, char *abs_path, const size_t abs_path_size)
 {
 	typedef DWORD (WINAPI * get_final_fn)(HANDLE,LPCSTR,DWORD,DWORD);
@@ -1855,17 +1856,19 @@ int win_expand_path(const char *rel_path, char *abs_path, const size_t abs_path_
 		return -1;
 	}
 
-	h = CreateFile(rel_path, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+	h = CreateFile(rel_path, GENERIC_READ, 
+		       FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
 		       FILE_FLAG_BACKUP_SEMANTICS, NULL);
 
 	if (h == INVALID_HANDLE_VALUE) {
-		errno = EINVAL;
+		errno = ENOENT;
 		return -1;
 	}
-	/* The sizes and '\0' is a mess on different Windows versions, but as we use the Ansi version,
-	   we can supply a large enough buffer and then return sane values for the length/need.
-	   If converting this code to Unicode, the buffer needs to be able to grow up to abs_path_size
-	   for this to work. */
+	/* The sizes and '\0' is a mess on different Windows versions, but as 
+	   we use the Ansi version, we can supply a large enough buffer and 
+	   then return sane values for the length/need.
+	   If converting this code to Unicode, the buffer needs to be able to 
+	   grow up to abs_path_size for this to work. */
 	res = pGetFinalPathNameByHandle(h, cptr, PBUFSIZE,0);
 
 	if (!res) {
