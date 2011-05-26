@@ -273,16 +273,7 @@ static int create_default_files(const char *template_path)
 	}
 
 	if (!reinit) {
-		/* Check if symlink is supported in the work tree */
-		path[len] = 0;
-		strcpy(path + len, "tXXXXXX");
-		if (!close(xmkstemp(path)) &&
-		    !unlink(path) &&
-		    !symlink("testing", path) &&
-		    !lstat(path, &st1) &&
-		    S_ISLNK(st1.st_mode))
-			unlink(path); /* good */
-		else
+		if (!enable_symlinks(git_dir))
 			git_config_set("core.symlinks", "false");
 
 		/* Check if the filesystem is case-insensitive */

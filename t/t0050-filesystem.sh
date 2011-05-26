@@ -77,6 +77,10 @@ test_expect_success "detection of filesystem w/o symlink support during repo ini
 '
 fi
 
+test_expect_success "symlink filesystem interface consistency" '
+	test-symlinks
+'
+
 test_expect_success "setup case tests" '
 
 	git config core.ignorecase true &&
