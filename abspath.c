@@ -25,7 +25,7 @@ const char *real_path(const char *path)
 {
 	static char bufs[2][PATH_MAX + 1], *buf = bufs[0], *next_buf = bufs[1];
 	char cwd[1024] = "";
-	int buf_index = 1;
+	int buf_index;
 
 	int depth = MAXDEPTH;
 	char *last_elem = NULL;
@@ -37,6 +37,13 @@ const char *real_path(const char *path)
 
 	if (strlcpy(buf, path, PATH_MAX) >= PATH_MAX)
 		die ("Too long path: %.*s", 60, path);
+
+	/* Ensures that components are separated by '/' (Windows only) */
+	for (buf_index = 0; buf_index < strlen(buf); ++buf_index)
+		if (is_dir_sep(buf[buf_index]))
+			buf[buf_index] = '/';
+
+	buf_index = 1;
 
 	while (depth--) {
 		if (!is_directory(buf)) {
