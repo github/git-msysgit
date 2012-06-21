@@ -2132,3 +2132,22 @@ void mingw_startup()
 	/* initialize Unicode console */
 	winansi_init();
 }
+
+int measure_time()
+{
+	static LARGE_INTEGER last;
+	LARGE_INTEGER current;
+	int diff;
+
+	if (QueryPerformanceCounter(&current) == FALSE)
+		return 0;
+
+	if (!last.LowPart) {
+		last = current;
+		return 0;
+	}
+
+	diff = current.LowPart - last.LowPart;
+	last = current;
+	return diff;
+}
