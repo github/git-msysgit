@@ -2140,9 +2140,10 @@ static double LARGE_INTEGER_to_double(DWORD low, LONG high)
 }
 
 #ifdef __GNUC__
-__attribute__((format (printf, 3, 4)))
+__attribute__((format (printf, 4, 5)))
 #endif
-double measure_time_aux(const char *file, int lineno, const char *fmt, ...)
+double measure_time_aux(const char *file, int lineno, double threshold,
+			const char *fmt, ...)
 {
 	va_list ap;
 	static LARGE_INTEGER last;
@@ -2170,6 +2171,9 @@ double measure_time_aux(const char *file, int lineno, const char *fmt, ...)
 	diffHigh = current.HighPart - last.HighPart;
 	last = current;
 	diff = LARGE_INTEGER_to_double(diffLow, diffHigh) / frequency;
+
+	if (diff < threshold)
+		return diff;
 
 	fprintf(stderr, "%s:%d ", file, lineno);
 
