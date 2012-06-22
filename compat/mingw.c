@@ -2133,26 +2133,43 @@ void mingw_startup()
 	winansi_init();
 }
 
+static double LARGE_INTEGER_to_double(DWORD low, LONG high)
+{
+	const double twoToThePowerOf32 = 4294967296.0; /* 2^32 */
+	return (double)(low) + (double)(high) * twoToThePowerOf32;
+}
+
 #ifdef __GNUC__
 __attribute__((format (printf, 3, 4)))
 #endif
-int measure_time_aux(const char *file, int lineno, const char *fmt, ...)
+double measure_time_aux(const char *file, int lineno, const char *fmt, ...)
 {
 	va_list ap;
 	static LARGE_INTEGER last;
 	LARGE_INTEGER current;
-	int diff;
+	DWORD diffLow;
+	LONG diffHigh;
+	double frequency = -1, diff;
+
+	if (frequency < 0) {
+		LARGE_INTEGER f;
+		if(QueryPerformanceFrequency(&f) == FALSE)
+			return 0.0;
+		frequency =  LARGE_INTEGER_to_double(f.LowPart, f.HighPart);
+	}
 
 	if (QueryPerformanceCounter(&current) == FALSE)
-		return 0;
+		return 0.0;
 
 	if (!last.LowPart) {
 		last = current;
-		return 0;
+		return 0.0;
 	}
 
-	diff = current.LowPart - last.LowPart;
+	diffLow = current.LowPart - last.LowPart;
+	diffHigh = current.HighPart - last.HighPart;
 	last = current;
+	diff = LARGE_INTEGER_to_double(diffLow, diffHigh) / frequency;
 
 	fprintf(stderr, "%s:%d ", file, lineno);
 
@@ -2160,6 +2177,6 @@ int measure_time_aux(const char *file, int lineno, const char *fmt, ...)
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
 
-	fprintf(stderr, ": %i\n", diff);
+	fprintf(stderr, ": %f\n", diff);
 	return diff;
 }
