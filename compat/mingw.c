@@ -2134,9 +2134,9 @@ void mingw_startup()
 }
 
 #ifdef __GNUC__
-__attribute__((format (printf, 1, 2)))
+__attribute__((format (printf, 3, 4)))
 #endif
-int measure_time(const char *fmt, ...)
+int measure_time_aux(const char *file, int lineno, const char *fmt, ...)
 {
 	va_list ap;
 	static LARGE_INTEGER last;
@@ -2153,6 +2153,8 @@ int measure_time(const char *fmt, ...)
 
 	diff = current.LowPart - last.LowPart;
 	last = current;
+
+	fprintf(stderr, "%s:%d ", file, lineno);
 
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
