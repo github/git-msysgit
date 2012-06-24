@@ -67,6 +67,18 @@ struct string_list_item *string_list_insert_at_index(struct string_list *list,
 	return list->items + index;
 }
 
+static int add_one(struct string_list_item *item, void *data)
+{
+	struct string_list *cmds = (struct string_list *) data;
+	string_list_insert(cmds, item->string);
+	return 0;
+}
+
+void string_list_insert_list(struct string_list *cmds, struct string_list *old)
+{
+	for_each_string_list(cmds, add_one, cmds);
+}
+
 int string_list_has_string(const struct string_list *list, const char *string)
 {
 	int exact_match;

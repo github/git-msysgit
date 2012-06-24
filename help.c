@@ -8,80 +8,33 @@
 #include "column.h"
 #include "version.h"
 
-void add_cmdname(struct cmdnames *cmds, const char *name, int len)
-{
-	struct cmdname *ent = xmalloc(sizeof(*ent) + len + 1);
-
-	ent->len = len;
-	memcpy(ent->name, name, len);
-	ent->name[len] = 0;
-
-	ALLOC_GROW(cmds->names, cmds->cnt + 1, cmds->alloc);
-	cmds->names[cmds->cnt++] = ent;
-}
-
-static void clean_cmdnames(struct cmdnames *cmds)
-{
-	int i;
-	for (i = 0; i < cmds->cnt; ++i)
-		free(cmds->names[i]);
-	free(cmds->names);
-	cmds->cnt = 0;
-	cmds->alloc = 0;
-}
-
-static int cmdname_compare(const void *a_, const void *b_)
-{
-	struct cmdname *a = *(struct cmdname **)a_;
-	struct cmdname *b = *(struct cmdname **)b_;
-	return strcmp(a->name, b->name);
-}
-
-static void uniq(struct cmdnames *cmds)
-{
-	int i, j;
-
-	if (!cmds->cnt)
-		return;
-
-	for (i = j = 1; i < cmds->cnt; i++)
-		if (strcmp(cmds->names[i]->name, cmds->names[i-1]->name))
-			cmds->names[j++] = cmds->names[i];
-
-	cmds->cnt = j;
-}
-
-void exclude_cmds(struct cmdnames *cmds, struct cmdnames *excludes)
+void exclude_cmds(struct string_list *cmds, struct string_list *excludes)
 {
 	int ci, cj, ei;
 	int cmp;
 
 	ci = cj = ei = 0;
-	while (ci < cmds->cnt && ei < excludes->cnt) {
-		cmp = strcmp(cmds->names[ci]->name, excludes->names[ei]->name);
+	while (ci < cmds->nr && ei < excludes->nr) {
+		cmp = strcmp(cmds->items[ci].string, excludes->items[ei].string);
 		if (cmp < 0)
-			cmds->names[cj++] = cmds->names[ci++];
+			cmds->items[cj++] = cmds->items[ci++];
 		else if (cmp == 0)
 			ci++, ei++;
 		else if (cmp > 0)
 			ei++;
 	}
 
-	while (ci < cmds->cnt)
-		cmds->names[cj++] = cmds->names[ci++];
+	while (ci < cmds->nr)
+		cmds->items[cj++] = cmds->items[ci++];
 
-	cmds->cnt = cj;
+	cmds->nr = cj;
 }
 
-static void pretty_print_string_list(struct cmdnames *cmds,
+static void pretty_print_string_list(struct string_list *list,
 				     unsigned int colopts)
 {
-	struct string_list list = STRING_LIST_INIT_NODUP;
 	struct column_options copts;
-	int i;
 
-	for (i = 0; i < cmds->cnt; i++)
-		string_list_append(&list, cmds->names[i]->name);
 	/*
 	 * always enable column display, we only consult column.*
 	 * about layout strategy and stuff
@@ -90,8 +43,8 @@ static void pretty_print_string_list(struct cmdnames *cmds,
 	memset(&copts, 0, sizeof(copts));
 	copts.indent = "  ";
 	copts.padding = 2;
-	print_columns(&list, colopts, &copts);
-	string_list_clear(&list, 0);
+	print_columns(list, colopts, &copts);
+	string_list_clear(list, 0);
 }
 
 static int is_executable(const char *name)
@@ -124,7 +77,7 @@ if ((st.st_mode & S_IXUSR) == 0)
 	return st.st_mode & S_IXUSR;
 }
 
-static void list_commands_in_dir(struct cmdnames *cmds,
+static void list_commands_in_dir(struct string_list *cmds,
 					 const char *path,
 					 const char *prefix)
 {
@@ -158,25 +111,21 @@ static void list_commands_in_dir(struct cmdnames *cmds,
 		if (has_extension(de->d_name, ".exe"))
 			entlen -= 4;
 
-		add_cmdname(cmds, de->d_name + prefix_len, entlen);
+		string_list_insert(cmds, de->d_name + prefix_len);
 	}
 	closedir(dir);
 	strbuf_release(&buf);
 }
 
 void load_command_list(const char *prefix,
-		struct cmdnames *main_cmds,
-		struct cmdnames *other_cmds)
+		struct string_list *main_cmds,
+		struct string_list *other_cmds)
 {
 	const char *env_path = getenv("PATH");
 	const char *exec_path = git_exec_path();
 
-	if (exec_path) {
+	if (exec_path)
 		list_commands_in_dir(main_cmds, exec_path, prefix);
-		qsort(main_cmds->names, main_cmds->cnt,
-		      sizeof(*main_cmds->names), cmdname_compare);
-		uniq(main_cmds);
-	}
 
 	if (env_path) {
 		char *paths, *path, *colon;
@@ -192,18 +141,14 @@ void load_command_list(const char *prefix,
 			path = colon + 1;
 		}
 		free(paths);
-
-		qsort(other_cmds->names, other_cmds->cnt,
-		      sizeof(*other_cmds->names), cmdname_compare);
-		uniq(other_cmds);
 	}
 	exclude_cmds(other_cmds, main_cmds);
 }
 
 void list_commands(unsigned int colopts,
-		   struct cmdnames *main_cmds, struct cmdnames *other_cmds)
+		   struct string_list *main_cmds, struct string_list *other_cmds)
 {
-	if (main_cmds->cnt) {
+	if (main_cmds->nr) {
 		const char *exec_path = git_exec_path();
 		printf_ln(_("available git commands in '%s'"), exec_path);
 		putchar('\n');
@@ -211,7 +156,7 @@ void list_commands(unsigned int colopts,
 		putchar('\n');
 	}
 
-	if (other_cmds->cnt) {
+	if (other_cmds->nr) {
 		printf_ln(_("git commands available from elsewhere on your $PATH"));
 		putchar('\n');
 		pretty_print_string_list(other_cmds, colopts);
@@ -219,17 +164,8 @@ void list_commands(unsigned int colopts,
 	}
 }
 
-int is_in_cmdlist(struct cmdnames *c, const char *s)
-{
-	int i;
-	for (i = 0; i < c->cnt; i++)
-		if (!strcmp(s, c->names[i]->name))
-			return 1;
-	return 0;
-}
-
 static int autocorrect;
-static struct cmdnames aliases;
+static struct string_list aliases = STRING_LIST_INIT_DUP;
 
 static int git_unknown_cmd_config(const char *var, const char *value, void *cb)
 {
@@ -237,30 +173,20 @@ static int git_unknown_cmd_config(const char *var, const char *value, void *cb)
 		autocorrect = git_config_int(var,value);
 	/* Also use aliases for command lookup */
 	if (!prefixcmp(var, "alias."))
-		add_cmdname(&aliases, var + 6, strlen(var + 6));
+		string_list_insert(&aliases, var + 6);
 
 	return git_default_config(var, value, cb);
 }
 
 static int levenshtein_compare(const void *p1, const void *p2)
 {
-	const struct cmdname *const *c1 = p1, *const *c2 = p2;
-	const char *s1 = (*c1)->name, *s2 = (*c2)->name;
-	int l1 = (*c1)->len;
-	int l2 = (*c2)->len;
+	const struct string_list_item *c1 = p1;
+	const struct string_list_item *c2 = p2;
+	const char *s1 = c1->string, *s2 = c2->string;
+	int l1 = (int) (long int) (c1->util);
+	int l2 = (int) (long int) (c2->util);
+
 	return l1 != l2 ? l1 - l2 : strcmp(s1, s2);
-}
-
-static void add_cmd_list(struct cmdnames *cmds, struct cmdnames *old)
-{
-	int i;
-	ALLOC_GROW(cmds->names, cmds->cnt + old->cnt, cmds->alloc);
-
-	for (i = 0; i < old->cnt; i++)
-		cmds->names[cmds->cnt++] = old->names[i];
-	free(old->names);
-	old->cnt = 0;
-	old->names = NULL;
 }
 
 /* An empirically derived magic number */
@@ -274,26 +200,18 @@ static const char bad_interpreter_advice[] =
 const char *help_unknown_cmd(const char *cmd)
 {
 	int i, n, best_similarity = 0;
-	struct cmdnames main_cmds, other_cmds;
-
-	memset(&main_cmds, 0, sizeof(main_cmds));
-	memset(&other_cmds, 0, sizeof(other_cmds));
-	memset(&aliases, 0, sizeof(aliases));
+	struct string_list main_cmds = STRING_LIST_INIT_DUP,
+			   other_cmds = STRING_LIST_INIT_DUP;
 
 	git_config(git_unknown_cmd_config, NULL);
 
 	load_command_list("git-", &main_cmds, &other_cmds);
+	string_list_insert_list(&main_cmds, &aliases);
+	string_list_insert_list(&main_cmds, &other_cmds);
 
-	add_cmd_list(&main_cmds, &aliases);
-	add_cmd_list(&main_cmds, &other_cmds);
-	qsort(main_cmds.names, main_cmds.cnt,
-	      sizeof(main_cmds.names), cmdname_compare);
-	uniq(&main_cmds);
-
-	/* This abuses cmdname->len for levenshtein distance */
-	for (i = 0, n = 0; i < main_cmds.cnt; i++) {
+	for (i = 0, n = 0; i < main_cmds.nr; i++) {
 		int cmp = 0; /* avoid compiler stupidity */
-		const char *candidate = main_cmds.names[i]->name;
+		const char *candidate = main_cmds.items[i].string;
 
 		/*
 		 * An exact match means we have the command, but
@@ -312,40 +230,40 @@ const char *help_unknown_cmd(const char *cmd)
 			n++; /* use the entry from common_cmds[] */
 			if (!prefixcmp(candidate, cmd)) {
 				/* Give prefix match a very good score */
-				main_cmds.names[i]->len = 0;
+				main_cmds.items[i].util = 0;
 				continue;
 			}
 		}
 
-		main_cmds.names[i]->len =
+		main_cmds.items[i].util = (void *) (long int)
 			levenshtein(cmd, candidate, 0, 2, 1, 3) + 1;
 	}
 
-	qsort(main_cmds.names, main_cmds.cnt,
-	      sizeof(*main_cmds.names), levenshtein_compare);
+	qsort(main_cmds.items, main_cmds.nr,
+	      sizeof(*main_cmds.items), levenshtein_compare);
 
-	if (!main_cmds.cnt)
+	if (!main_cmds.nr)
 		die(_("Uh oh. Your system reports no Git commands at all."));
 
 	/* skip and count prefix matches */
-	for (n = 0; n < main_cmds.cnt && !main_cmds.names[n]->len; n++)
+	for (n = 0; n < main_cmds.nr && !main_cmds.items[n].util; n++)
 		; /* still counting */
 
-	if (main_cmds.cnt <= n) {
+	if (main_cmds.nr <= n) {
 		/* prefix matches with everything? that is too ambiguous */
 		best_similarity = SIMILARITY_FLOOR + 1;
 	} else {
 		/* count all the most similar ones */
-		for (best_similarity = main_cmds.names[n++]->len;
-		     (n < main_cmds.cnt &&
-		      best_similarity == main_cmds.names[n]->len);
+		for (best_similarity = (int) (long int) main_cmds.items[n++].util;
+		     (n < main_cmds.nr &&
+		      best_similarity == (int) (long int) main_cmds.items[n].util);
 		     n++)
 			; /* still counting */
 	}
 	if (autocorrect && n == 1 && SIMILAR_ENOUGH(best_similarity)) {
-		const char *assumed = main_cmds.names[0]->name;
-		main_cmds.names[0] = NULL;
-		clean_cmdnames(&main_cmds);
+		/* TODO: free this string */
+		const char *assumed = xstrdup(main_cmds.items[0].string);
+		string_list_clear(&main_cmds, 0);
 		fprintf_ln(stderr,
 			   _("WARNING: You called a Git command named '%s', "
 			     "which does not exist.\n"
@@ -368,7 +286,7 @@ const char *help_unknown_cmd(const char *cmd)
 			   n));
 
 		for (i = 0; i < n; i++)
-			fprintf(stderr, "\t%s\n", main_cmds.names[i]->name);
+			fprintf(stderr, "\t%s\n", main_cmds.items[i].string);
 	}
 
 	exit(1);
