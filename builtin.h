@@ -43,6 +43,8 @@ extern int check_pager_config(const char *cmd);
 
 extern int textconv_object(const char *path, unsigned mode, const unsigned char *sha1, char **buf, unsigned long *buf_size);
 
+void get_internal_commands(struct string_list *cmds);
+
 extern int cmd_add(int argc, const char **argv, const char *prefix);
 extern int cmd_annotate(int argc, const char **argv, const char *prefix);
 extern int cmd_apply(int argc, const char **argv, const char *prefix);
