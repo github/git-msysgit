@@ -584,6 +584,9 @@ extern int fsync_object_files;
 extern int core_preload_index;
 extern int core_apply_sparse_checkout;
 extern int precomposed_unicode;
+#if defined(NO_MMAP) && NO_MMAP == OPTIONAL
+extern int use_mmap;
+#endif
 
 /*
  * The character that begins a commented line in user-editable file

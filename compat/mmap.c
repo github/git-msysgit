@@ -1,4 +1,30 @@
 #include "../git-compat-util.h"
+#include "../cache.h"
+
+#if defined(NO_MMAP) && NO_MMAP == OPTIONAL
+#undef mmap
+#undef munmap
+
+void *git_mmap2(void *start, size_t length, int prot, int flags, int fd, off_t offset);
+int git_munmap2(void *start, size_t length);
+
+void *git_mmap(void *start, size_t length, int prot, int flags, int fd, off_t offset)
+{
+	return use_mmap ?
+		mmap(start, length, prot, flags, fd, offset) :
+		git_mmap2(start, length, prot, flags, fd, offset);
+}
+
+int git_munmap(void *start, size_t length)
+{
+	return use_mmap ?
+		munmap(start, length) :
+		git_munmap2(start, length);
+}
+
+#define git_mmap git_mmap2
+#define git_munmap git_munmap2
+#endif
 
 void *git_mmap(void *start, size_t length, int prot, int flags, int fd, off_t offset)
 {

@@ -367,10 +367,14 @@ static inline const char *skip_prefix(const char *str, const char *prefix)
 
 #if defined(NO_MMAP) || defined(USE_WIN32_MMAP)
 
+#if defined(NO_MMAP) && NO_MMAP == OPTIONAL
+#include <sys/mman.h>
+#else
 #ifndef PROT_READ
 #define PROT_READ 1
 #define PROT_WRITE 2
 #define MAP_PRIVATE 1
+#endif
 #endif
 
 #define mmap git_mmap

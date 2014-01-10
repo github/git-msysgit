@@ -64,6 +64,9 @@ struct startup_info *startup_info;
 unsigned long pack_size_limit_cfg;
 enum hide_dotfiles_type hide_dotfiles = HIDE_DOTFILES_DOTGITONLY;
 int core_fscache;
+#if defined(NO_MMAP) && NO_MMAP == OPTIONAL
+int use_mmap = 1;
+#endif
 
 /*
  * The character that begins a commented line in user-editable file
@@ -149,6 +152,12 @@ static void setup_git_env(void)
 		read_replace_refs = 0;
 	namespace = expand_namespace(getenv(GIT_NAMESPACE_ENVIRONMENT));
 	namespace_len = strlen(namespace);
+#if defined(NO_MMAP) && NO_MMAP == OPTIONAL
+	{
+		const char *no_mmap = getenv("GIT_NO_MMAP");
+		use_mmap = !no_mmap || (strcasecmp(no_mmap, "true") && strcmp(no_mmap, "1"));
+	}
+#endif
 }
 
 int is_bare_repository(void)
