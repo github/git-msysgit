@@ -180,8 +180,7 @@ static int add(int argc, const char **argv)
 	url = argv[1];
 
 	remote = remote_get(name);
-	if (remote && (remote->url_nr > 1 || strcmp(name, remote->url[0]) ||
-			remote->fetch_refspec_nr))
+	if (remote && (remote->url_nr > 1 || strcmp(name, remote->url[0])))
 		die(_("remote %s already exists."), name);
 
 	strbuf_addf(&buf2, "refs/heads/test:refs/remotes/%s/test", name);
